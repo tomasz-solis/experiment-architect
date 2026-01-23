@@ -13,6 +13,12 @@ load_dotenv()
 # ==========================================
 # 1. CONFIGURATION & SETUP
 # ==========================================
+
+# Statistical constants - don't touch these unless you know what you're doing
+Z_ALPHA = 1.96  # 95% confidence level
+Z_BETA = 0.84   # 80% power
+ALPHA = 0.05    # Significance threshold
+
 st.set_page_config(page_title="Experiment Architect", page_icon="🏗️", layout="centered")
 
 # Initialize OpenAI Client with safe failover
@@ -22,7 +28,7 @@ api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     try:
         api_key = st.secrets["OPENAI_API_KEY"]
-    except Exception:
+    except (KeyError, FileNotFoundError):
         api_key = None
 
 try:
@@ -31,28 +37,29 @@ try:
         ai_enabled = True
     else:
         ai_enabled = False
-except Exception:
+        client = None
+except Exception as e:
     ai_enabled = False
+    client = None
+    print(f"OpenAI init failed: {e}")
 
 def ask_agent(system_role, user_prompt, json_mode=False):
-    """
-    Connects to the LLM. 
-    If json_mode is True, enforces a valid JSON object response.
-    """
+    """Call the LLM. Set json_mode=True to force JSON output."""
     if not ai_enabled:
+        st.warning("⚠️ AI features disabled - check your API key in .env")
         return None
-    
+
     try:
         response_format = {"type": "json_object"} if json_mode else None
-        
+
         with st.spinner("Processing..."):
             response = client.chat.completions.create(
-                model="gpt-4o", 
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": system_role},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.3, # Low temperature for consistent formatting
+                temperature=0.3,
                 response_format=response_format
             )
             return response.choices[0].message.content
@@ -99,14 +106,23 @@ with tab_design:
             
             if st.button("Calculate Minimum Detectable Effect"):
                 total_n = wiz_traffic * (wiz_weeks * 7)
-                z_score = (1.96 + 0.84)**2 # Alpha 0.05, Power 80%
+                z_score = (Z_ALPHA + Z_BETA)**2
                 pooled_var = 2 * wiz_base * (1 - wiz_base)
-                
-                # Formula: MDE = sqrt( (Z^2 * Var) / N ) / Baseline
-                feasible_mde = np.sqrt((z_score * pooled_var) / total_n) / wiz_base
-                
-                st.info(f"📉 In {wiz_weeks} weeks, the smallest lift you can detect is **{feasible_mde:.1%}**.")
-                st.caption("If your feature impact is smaller than this, you will never reach significance.")
+
+                # Sanity checks - catch edge cases before the math explodes
+                if total_n < 100:
+                    st.error("⚠️ Not enough traffic. You need at least 100 total visitors.")
+                elif wiz_base < 0.001 or wiz_base > 0.999:
+                    st.error("⚠️ Baseline conversion must be between 0.1% and 99.9%")
+                else:
+                    # Formula: MDE = sqrt( (Z^2 * Var) / N ) / Baseline
+                    feasible_mde = np.sqrt((z_score * pooled_var) / total_n) / wiz_base
+
+                    if feasible_mde > 10.0:
+                        st.error(f"📉 Your detectable lift is **{feasible_mde:.1%}** - way too high. Increase traffic or wait longer.")
+                    else:
+                        st.info(f"📉 In {wiz_weeks} weeks, the smallest lift you can detect is **{feasible_mde:.1%}**.")
+                        st.caption("If your feature impact is smaller than this, you will never reach significance.")
 
         st.divider()
 
@@ -146,8 +162,8 @@ with tab_design:
         p2 = baseline * (1 + mde)
         delta = p2 - baseline
         split_factor = (1 / split_ratio) + (1 / (1 - split_ratio))
-        pooled_var = (baseline * (1-baseline) + p2 * (1-p2)) / 2 
-        z_score = (1.96 + 0.84)**2
+        pooled_var = (baseline * (1-baseline) + p2 * (1-p2)) / 2
+        z_score = (Z_ALPHA + Z_BETA)**2
         n_total = z_score * pooled_var * split_factor / (delta**2)
         days = np.ceil(n_total / daily_traffic)
 
@@ -281,32 +297,40 @@ with tab_analyze:
                         else:
                             group_a = df[df[variant_col] == groups[0]][metric_col]
                             group_b = df[df[variant_col] == groups[1]][metric_col]
-                            
+
                             # Calculate Lift
                             mean_a = group_a.mean()
                             mean_b = group_b.mean()
                             lift = (mean_b - mean_a) / mean_a
-                            
+
                             st.metric(f"Lift ({groups[1]} vs {groups[0]})", f"{lift:.2%}")
-                            
+
                             # Run Statistical Test
                             if metric_type == "binary":
-                                # Chi-Squared
-                                successes = [group_a.sum(), group_b.sum()]
-                                nobs = [len(group_a), len(group_b)]
-                                stat, p_val, _, _ = chi2_contingency([successes, nobs])
+                                # Chi-Squared test
+                                successes_a = int(group_a.sum())
+                                successes_b = int(group_b.sum())
+                                failures_a = len(group_a) - successes_a
+                                failures_b = len(group_b) - successes_b
+
+                                contingency_table = [
+                                    [successes_a, failures_a],
+                                    [successes_b, failures_b]
+                                ]
+                                stat, p_val, _, _ = chi2_contingency(contingency_table)
                                 test_name = "Chi-Squared Test"
                             else:
-                                # T-Test
+                                # Welch's T-Test
                                 stat, p_val = ttest_ind(group_a, group_b, equal_var=False)
                                 test_name = "Welch's T-Test"
-                            
-                            # Verdict
-                            if p_val < 0.05:
-                                st.success(f"🏆 **Winner:** {groups[1] if lift > 0 else groups[0]} is significant!")
+
+                            # Declare winner based on actual means
+                            if p_val < ALPHA:
+                                winner = groups[1] if mean_b > mean_a else groups[0]
+                                st.success(f"🏆 **Winner:** {winner} is statistically significant!")
                             else:
                                 st.warning("🤷 **Inconclusive:** Result is not statistically significant.")
-                                
+
                             st.caption(f"Method: {test_name} | P-Value: {p_val:.4f}")
 
                     except Exception as e:
