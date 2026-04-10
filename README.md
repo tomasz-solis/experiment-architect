@@ -1,4 +1,4 @@
-# 🏗️ The Experiment Architect
+# The Experiment Architect
 
 **Plan. Execute. Analyze.** The Decision Scientist's Companion.
 
