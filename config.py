@@ -9,9 +9,9 @@ ALPHA = 0.05    # Significance threshold
 BAYESIAN_SAMPLES = 100000
 
 # Streamlit config
-PAGE_TITLE = "Experiment Architect"
+PAGE_TITLE = "Test Architect"
 PAGE_ICON = "🏗️"
-PAGE_LAYOUT = "centered"
+PAGE_LAYOUT = "wide"
 
 # LLM Models
 MODEL_OPENAI = "gpt-4o"
