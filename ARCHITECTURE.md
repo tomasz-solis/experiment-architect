@@ -1,325 +1,173 @@
-# Architecture Documentation
+# Architecture
 
-## Overview
-The Experiment Architect is a production-ready Streamlit application with a clean modular architecture.
+## Repository shape
 
----
-
-## Current Structure
-
-```
-experimentation-architect/
-├── app.py (669 lines)              # Main Streamlit app - UI orchestration only
-├── config.py (15 lines)            # All configuration constants
-├── llm/                            # LLM abstraction layer
-│   ├── __init__.py
-│   ├── client.py (98 lines)        # Factory, initialization, API wrapper
-│   └── providers.py (67 lines)     # OpenAI, Anthropic, Gemini providers
-├── stats/                          # Statistical computation layer
-│   ├── __init__.py
-│   ├── frequentist.py (175 lines)  # Tests, CI, effect sizes, sample size
-│   ├── bayesian.py (64 lines)      # Beta-Binomial analysis
-│   └── causal.py (105 lines)       # DiD, RDD, method selector
-└── ui/                             # UI helper components
-    ├── __init__.py
-    └── components.py (66 lines)    # Shared display functions
-```
-
-**Total**: 1,253 lines of production code
-
----
-
-## Design Principles
-
-### 1. DRY (Don't Repeat Yourself)
-- **config.py**: Single source of truth for all constants
-- **No duplication**: app.py imports from modules, doesn't redefine logic
-- **Reusable functions**: All stats/LLM code can be imported elsewhere
-
-### 2. Separation of Concerns
-- **app.py**: UI orchestration and Streamlit-specific code only
-- **stats/**: Pure Python statistical functions (no Streamlit dependencies)
-- **llm/**: LLM client abstraction (provider-agnostic)
-- **config.py**: Configuration constants only
-
-### 3. Lazy Loading
-- Optional dependencies (statsmodels, anthropic, google-generativeai) load only when used
-- Clear error messages if packages are missing
-- Graceful degradation (app works without AI features if no API key)
-
-### 4. Production Ready
-- Proper error handling with try/except
-- Clear, concise error messages
-- No magic numbers (all constants in config.py)
-
----
-
-## Module Details
-
-### config.py
-**Purpose**: Central configuration
-
-```python
-# Statistical constants
-Z_ALPHA = 1.96  # 95% confidence
-Z_BETA = 0.84   # 80% power
-ALPHA = 0.05    # Significance threshold
-
-# Bayesian sampling
-BAYESIAN_SAMPLES = 100000
-
-# Streamlit config
-PAGE_TITLE = "Experiment Architect"
-PAGE_ICON = "🏗️"
-PAGE_LAYOUT = "centered"
+```text
+experiment-architect/
+├── app.py
+├── config.py
+├── examples/
+│   └── sample_ab_test.csv
+├── llm/
+│   ├── client.py
+│   └── providers.py
+├── stats/
+│   ├── bayesian.py
+│   ├── causal.py
+│   ├── frequentist.py
+│   ├── plots.py
+│   ├── sanity.py
+│   └── validation.py
+├── tests/
+│   ├── test_bayesian.py
+│   ├── test_causal.py
+│   ├── test_frequentist.py
+│   ├── test_llm_client.py
+│   └── test_validation.py
+├── ui/
+│   └── components.py
+├── pyproject.toml
+├── requirements.txt
+└── requirements-dev.txt
 ```
 
-**Why**: Single source of truth. Change Z_ALPHA once, it updates everywhere.
+## Design intent
 
----
+The app keeps three concerns separate:
 
-### llm/ (LLM Abstraction Layer)
+1. `app.py` owns user interaction.
+2. `stats/` owns calculations, diagnostics, and input contracts.
+3. `llm/` owns provider setup plus the small amount of retry logic needed for JSON mapping.
 
-#### client.py
-**Purpose**: LLM client factory and API wrapper
+That split matters because it keeps the statistical code testable without Streamlit and keeps the UI from turning into a second analytics layer.
 
-**Key Functions**:
-- `get_llm_provider()` - Read from .env or Streamlit secrets
-- `get_api_key(provider)` - Fetch API key for provider
-- `create_llm_client()` - Factory that returns (client, enabled, provider)
-- `ask_agent(...)` - Unified API for all providers
+## Request flow
 
-**Example**:
-```python
-from llm.client import create_llm_client, ask_agent
+### A/B test design
 
-client, ai_enabled, provider = create_llm_client()
-response = ask_agent(client, provider, ai_enabled,
-                    "You are a statistician",
-                    "Explain p-values")
-```
+The design tab uses deterministic code only:
 
-#### providers.py
-**Purpose**: Provider implementations
+- `stats.frequentist.calculate_sample_size`
+- `stats.frequentist.calculate_reverse_mde`
+- `stats.sanity.run_all_checks`
+- `stats.plots.plot_power_curve`
 
-**Classes**:
-- `OpenAIProvider` - GPT-4o
-- `AnthropicProvider` - Claude 3.5 Sonnet
-- `GeminiProvider` - Gemini 1.5 Pro
+The sensitivity expander stays in the UI layer, but it only calls those helpers and renders the outputs.
 
-**Pattern**: Each provider has a `call(system_role, user_prompt, json_mode)` method.
+### Raw CSV analysis
 
----
+This path has four stages:
 
-### stats/ (Statistical Computation Layer)
+1. The LLM maps semantic roles such as `variant_col` and `metric_col`.
+2. `llm.client.ask_agent_json()` retries once if the payload is malformed or missing required keys.
+3. `stats.validation` checks that mapped columns exist, coerces numeric or binary fields, and drops rows missing required values.
+4. The app routes the cleaned data to frequentist or Bayesian helpers, then applies frequentist guardrails when the user marks multiple primary metrics or early peeking.
 
-#### frequentist.py
-**Purpose**: Frequentist statistical tests
+The important boundary is that the LLM never computes the statistic. It only proposes a schema.
 
-**Key Functions**:
-- `chi_squared_test(...)` - For binary outcomes
-- `welch_t_test(...)` - For continuous outcomes
-- `confidence_interval_binary(...)` - CI on lift for conversion rates
-- `confidence_interval_continuous(...)` - CI on lift for means
-- `check_srm(...)` - Sample Ratio Mismatch detection
-- `calculate_sample_size(...)` - Sample size & duration estimation
-- `calculate_reverse_mde(...)` - Reverse MDE calculator
-- `calculate_lift(...)` - Relative lift calculation
-- `is_significant(p_value)` - Significance check
+### Causal analysis
 
-**Example**:
-```python
-from stats.frequentist import chi_squared_test
+The causal tabs follow the same pattern:
 
-result = chi_squared_test(
-    successes_a=100, failures_a=900,
-    successes_b=115, failures_b=885
-)
-# Returns: {"p_value": 0.03, "effect_size": 0.048, ...}
-```
+1. The LLM maps the columns.
+2. `stats.validation` enforces binary treatment flags and numeric outcomes.
+3. `stats.causal` runs DiD or RDD.
+4. The UI surfaces diagnostics instead of hiding them.
 
-#### bayesian.py
-**Purpose**: Bayesian analysis
+## Statistical modules
 
-**Key Functions**:
-- `beta_binomial_analysis(...)` - Beta-Binomial conjugate prior
-- `get_decision_recommendation(prob)` - Decision logic
+### `stats/frequentist.py`
 
-**Returns**:
-- `prob_b_wins` - P(Variant > Control)
-- `expected_loss` - Expected loss if you ship variant B
-- Posterior parameters (alpha_a, beta_a, alpha_b, beta_b)
+Contains:
 
-**Example**:
-```python
-from stats.bayesian import beta_binomial_analysis
+- chi-squared test for binary outcomes
+- Welch's t-test for continuous outcomes
+- confidence intervals on relative lift
+- sample ratio mismatch check
+- Bonferroni-adjusted alpha helper for multiple primary metrics
+- peeking and multiple-comparison guardrail summary
+- sample size and reverse-MDE calculations
 
-result = beta_binomial_analysis(
-    successes_a=100, failures_a=900,
-    successes_b=115, failures_b=885
-)
-# Returns: {"prob_b_wins": 0.93, "expected_loss": 0.002, ...}
-```
+The reverse-MDE helper uses the same split-factor logic as the sample-size helper, so the two calculations stay aligned.
 
-#### causal.py
-**Purpose**: Causal inference methods
+### `stats/bayesian.py`
 
-**Key Functions**:
-- `difference_in_differences(df, ...)` - DiD regression
-- `regression_discontinuity(df, ...)` - RDD regression
-- `select_causal_method(...)` - Expert system for method selection
+Implements a Beta-Binomial model for binary metrics. It returns:
 
-**Pattern**: Lazy statsmodels imports with helpful error messages.
+- posterior win probability
+- expected loss if you ship the variant and it is worse
+- posterior alpha/beta parameters for both groups
 
-**Example**:
-```python
-from stats.causal import difference_in_differences
+The decision helper is intentionally loss-aware. High win probability is not enough when the downside remains large.
 
-result = difference_in_differences(
-    df=panel_data,
-    time_col='date',
-    treatment_col='treated',
-    outcome_col='revenue',
-    intervention_point='2024-01-01'
-)
-# Returns: {"coefficient": 5.2, "p_value": 0.01, "ci_lower": 1.3, "ci_upper": 9.1, ...}
-```
+### `stats/causal.py`
 
----
+Implements:
 
-### ui/ (UI Helper Components)
+- Difference-in-Differences with clustered standard errors by unit
+- a pre-period parallel-trends check
+- Regression Discontinuity with a density ratio diagnostic near the cutoff
+- a rule-of-thumb local bandwidth selector with a bandwidth sweep for robustness
+- a small method selector for DiD, RDD, PSM, and CausalImpact
 
-#### components.py
-**Purpose**: Reusable UI display functions
+This module is where the project makes its strongest analytical claim: the estimators return diagnostics, not just coefficients.
 
-**Key Functions**:
-- `show_data_quality(df)` - Display metrics: rows, missing values, duplicates
-- `show_data_preview(df, n_rows)` - Show first N rows
-- `show_srm_warning(ratio)` - Display SRM warning if needed
-- `show_frequentist_results(...)` - Display frequentist test results
-- `show_bayesian_results(...)` - Display Bayesian analysis results
-- `show_bayesian_decision(prob, group_name)` - Decision recommendation
+### `stats/validation.py`
 
-**Example**:
-```python
-from ui.components import show_data_quality
+This module exists because the LLM path needed a real schema contract.
 
-show_data_quality(df)  # Displays Streamlit metrics
-```
+It handles:
 
----
+- mapped-column existence checks
+- metric-type normalization
+- binary and numeric coercion
+- dropping rows missing required fields
+- pre-analysis validation for A/B, DiD, and RDD inputs
 
-### app.py (Main Application)
+Without this layer, a plausible-looking but wrong dtype could silently poison the result.
 
-**Purpose**: UI orchestration only
+## LLM layer
 
-**Structure**:
-```python
-# Import all modules
-from config import Z_ALPHA, Z_BETA, ALPHA, BAYESIAN_SAMPLES
-from llm.client import create_llm_client, ask_agent as llm_ask_agent
-from scipy.stats import ttest_ind, chi2_contingency, beta
+### `llm/providers.py`
 
-# Initialize LLM client
-client, ai_enabled, llm_provider = create_llm_client()
+Defines three provider adapters with a shared `call()` interface:
 
-# Thin wrapper for consistency
-def ask_agent(system_role, user_prompt, json_mode=False):
-    return llm_ask_agent(client, llm_provider, ai_enabled, system_role, user_prompt, json_mode)
+- OpenAI
+- Anthropic
+- Gemini
 
-# UI Layout
-st.title("🏗️ The Experiment Architect")
-st.markdown("**Plan. Execute. Analyze.** The Decision Scientist's Companion.")
+### `llm/client.py`
 
-tab_design, tab_analyze = st.tabs(["Design Experiment", "Analyze Results"])
+Handles:
 
-# Tab 1: Design
-# - A/B test calculator
-# - Reverse MDE wizard
-# - Causal method selector
-# - DiD/RDD implementations
+- optional dependency checks
+- provider selection
+- API key lookup from env or Streamlit secrets
+- plain text calls
+- JSON calls with one retry and a stricter follow-up prompt
 
-# Tab 2: Analyze
-# - Manual stats input (frequentist + Bayesian)
-# - CSV analyzer (automatic column mapping)
-# - SQL notebook generator
-```
+This is a thin layer on purpose. It is meant to reduce operational noise, not become an agent framework.
 
-**No business logic** - app.py is pure UI orchestration. All calculations happen in stats/ modules.
+## UI layer
 
----
+`ui/components.py` keeps rendering code out of `app.py`. These helpers are intentionally small and do not own statistical decisions.
 
-## Testing & Verification
+## Tests
 
-### Import Test
-```bash
-source venv/bin/activate
-python -c "
-from config import Z_ALPHA, BAYESIAN_SAMPLES
-from llm.client import create_llm_client
-from stats.frequentist import chi_squared_test
-from stats.bayesian import beta_binomial_analysis
-from stats.causal import difference_in_differences
-print('✓ All imports successful')
-"
-```
+The test suite mixes unit tests and simulated-data checks.
 
-### Run App
-```bash
-streamlit run app.py
-```
+- `test_frequentist.py` checks algebra, edge cases, and chi-squared diagnostics.
+- `test_bayesian.py` checks posterior behavior and the loss-aware decision rule.
+- `test_causal.py` uses synthetic data with known effects and includes placebo and manipulation-style checks.
+- `test_llm_client.py` checks JSON retry behavior without calling a real provider.
+- `test_validation.py` checks the schema and dtype contract for mapped dataframes.
 
----
+For repo hygiene, `.github/workflows/tests.yml` runs the test suite on GitHub Actions with Python 3.11.
 
-## Dependencies
+## Known limits
 
-### Core (Required)
-- streamlit
-- pandas
-- numpy
-- scipy
-- python-dotenv
-- openai (if using OpenAI)
-
-### Optional
-- **anthropic** - Only if LLM_PROVIDER=anthropic
-- **google-generativeai** - Only if LLM_PROVIDER=gemini
-- **statsmodels** - Only for DiD/RDD analysis (lazy loaded)
-
-All optional dependencies have graceful error messages if missing.
-
----
-
-## Architecture Benefits
-
-### 1. Testable
-Each stats function can be unit tested independently:
-```python
-def test_chi_squared():
-    result = chi_squared_test(100, 900, 115, 885)
-    assert result['p_value'] < 0.05
-    assert result['effect_size'] > 0
-```
-
-### 2. Reusable
-Import stats functions in Jupyter notebooks:
-```python
-from stats.frequentist import calculate_sample_size
-
-sample_size = calculate_sample_size(
-    baseline=0.10,
-    mde=0.10,
-    daily_traffic=5000
-)
-```
-
-### 3. Maintainable
-Change Chi-squared implementation? Edit one file (stats/frequentist.py). All uses update automatically.
-
-### 4. Flexible
-Swap LLM providers via .env without touching code:
-```bash
-# .env
-LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=sk-...
-```
+- LLM column mapping is schema-validated, not semantically guaranteed.
+- DiD uses a useful pre-trend warning, but passing that test does not prove identification.
+- RDD uses a rule-of-thumb local bandwidth and sweep diagnostics rather than a formal optimal bandwidth estimator.
+- Continuous-metric analysis still assumes mean-based summaries are sensible; heavily skewed revenue can need extra work.
+- The app exposes Bonferroni-style multiple-comparison guardrails and an early-peeking warning, but not a full sequential-testing framework.
