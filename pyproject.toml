@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "experiment-architect"
+version = "0.1.0"
+description = "Streamlit app for experiment design, causal method selection, and result analysis."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "streamlit>=1.52,<2.0",
+    "pandas>=2.3,<3.0",
+    "numpy>=2.0,<3.0",
+    "scipy>=1.16,<2.0",
+    "plotly>=6.5,<7.0",
+    "statsmodels>=0.14,<0.15",
+    "python-dotenv>=1.0,<2.0",
+    "openai>=2.14,<3.0",
+]
+
+[project.optional-dependencies]
+providers = [
+    "anthropic>=0.76,<1.0",
+    "google-generativeai>=0.8,<1.0",
+]
+dev = [
+    "pytest>=9.0,<10.0",
+    "pytest-cov>=5.0,<7.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["llm", "llm.*", "stats", "stats.*", "ui", "ui.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
