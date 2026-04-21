@@ -1,134 +1,116 @@
-# The Experiment Architect
+# Experiment Architect
 
-**Plan. Execute. Analyze.** The Decision Scientist's Companion.
+Experiment Architect is the repo for Test Architect, a Streamlit app for planning and analyzing product experiments. It covers A/B test sizing, causal method selection, CSV-based result analysis, and a small LLM layer that maps messy column names before Python runs the statistics.
 
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.31-FF4B4B)
-![OpenAI](https://img.shields.io/badge/AI-GPT--4o-green)
-![SciPy](https://img.shields.io/badge/Stats-SciPy-orange)
+Live app: `https://testarchitect.streamlit.app/`
 
-## Overview
+## What it does
 
-**The Experiment Architect** combines statistical rigor (SciPy/NumPy) with LLM-powered semantic mapping (OpenAI, Anthropic, or Gemini).
+- Designs A/B tests with sample size, reverse MDE, split-ratio penalty, and deterministic sanity checks.
+- Shows a sensitivity view so you can see how traffic and baseline assumptions change the detectable effect.
+- Recommends a causal method when randomization is not possible.
+- Runs DiD with a parallel-trends pre-test and clustered standard errors.
+- Runs RDD with a density check around the cutoff, a rule-of-thumb local bandwidth, and a bandwidth sweep for robustness.
+- Analyzes raw CSVs with frequentist or Bayesian methods after validating mapped columns, dtypes, and missing values.
+- Adds frequentist guardrails for multiple primary metrics and early peeking.
+- Uses expected loss alongside posterior win probability for Bayesian shipping recommendations.
 
-Key capabilities:
-1.  **Reverse MDE Calculator:** Tells you what's actually detectable given your traffic and time constraints
-2.  **Causal Inference Selector:** Guides you to the right quasi-experimental method (DiD, RDD, PSM)
-3.  **Hybrid Analysis:** LLMs handle semantic tasks (column mapping), Python handles all math (no hallucinated statistics)
+## How the app is structured
 
----
+The repo follows a simple split:
 
-## Core Philosophy
+- `app.py`: Streamlit UI and orchestration.
+- `stats/`: statistical methods, diagnostics, plotting helpers, and input validation.
+- `llm/`: provider wrappers plus JSON retry/parsing helpers.
+- `ui/`: small rendering helpers.
+- `tests/`: unit tests and simulation tests.
 
-### 1. LLMs for Semantics, Python for Math
-LLMs excel at understanding column names and context. Python handles all statistical calculations.
-* **❌ Wrong:** Asking LLM "Is this result significant?"
-* **✅ Right:** LLM maps columns, then `scipy.stats.chi2_contingency` calculates the p-value
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the fuller walkthrough.
 
-### 2. Reverse MDE Calculator
-Instead of guessing effect sizes, input your constraints (traffic, time) and calculate what's actually detectable.
+## Installation
 
----
+```bash
+git clone https://github.com/tomasz-solis/experiment-architect.git
+cd experiment-architect
+pip install -r requirements.txt
+```
 
-## Features
+If you want to run tests:
 
-### Tab 1: Design Experiment
-* **A/B Test Calculator:**
-    * Sample size & duration estimation
-    * Unequal split penalty calculator (efficiency loss of 80/20 vs 50/50)
-    * Sanity check: Flags unrealistic effect sizes based on industry benchmarks
-* **Causal Inference Selector:**
-    * Expert system selects the right quasi-experimental method (DiD, RDD, PSM)
-    * Full DiD and RDD implementations with file upload
-    * Code generator for PSM and CausalImpact
+```bash
+pip install -r requirements-dev.txt
+```
 
-### Tab 2: Analyze Results
-* **Manual Stats Input:**
-    * Frequentist analysis (p-values, confidence intervals, effect sizes)
-    * Bayesian analysis (probability, expected loss)
-    * Sample Ratio Mismatch detection
-* **CSV Analyzer:**
-    * Automatic column mapping
-    * Chi-squared test for binary outcomes
-    * Welch's T-test for continuous outcomes
-* **SQL Code Generator:**
-    * Generates Jupyter notebooks for BigQuery, Snowflake, Redshift
+Create a `.env` file if you want AI-assisted column mapping:
 
----
+```bash
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-your-key-here
 
-## Installation & Setup
+# or
+# LLM_PROVIDER=anthropic
+# ANTHROPIC_API_KEY=sk-ant-...
 
-1.  **Clone the repository**
-    ```bash
-    git clone [https://github.com/tomasz-solis/experiment-architect.git](https://github.com/tomasz-solis/experiment-architect.git)
-    cd experiment-architect
-    ```
+# or
+# LLM_PROVIDER=gemini
+# GEMINI_API_KEY=...
+```
 
-2.  **Install requirements**
-    ```bash
-    pip install -r requirements.txt
-    ```
+Then start the app:
 
-3.  **Configure API Key**
-    Create a file named `.env` in the root directory:
-    ```bash
-    # Choose your LLM provider (openai, anthropic, or gemini)
-    LLM_PROVIDER=openai
-    OPENAI_API_KEY=sk-your-openai-key-here
+```bash
+streamlit run app.py
+```
 
-    # OR use Anthropic/Claude
-    # LLM_PROVIDER=anthropic
-    # ANTHROPIC_API_KEY=sk-your-key-here
+The app still works without an API key. The LLM-powered mapping and code-generation paths are simply disabled.
 
-    # OR use Google Gemini
-    # LLM_PROVIDER=gemini
-    # GEMINI_API_KEY=your-key-here
-    ```
+## Streamlit Community Cloud
 
-4.  **Run the App**
-    ```bash
-    streamlit run app.py
-    ```
+For Streamlit Community Cloud, put the same keys in the app's `Secrets` settings instead of committing them to GitHub. A matching example lives in `.streamlit/secrets.toml.example`.
 
-5.  **Run Tests (Optional)**
-    ```bash
-    pytest tests/ -v
-    # 26 tests, 100% pass rate
-    ```
+```toml
+LLM_PROVIDER = "openai"
+OPENAI_API_KEY = "sk-your-key-here"
+```
 
----
+If you want the keep-awake workflow to ping the deployed app, add a repository variable named `STREAMLIT_APP_URL` with your public app URL, for example `https://your-app-name.streamlit.app/`.
 
-## Architecture
+## Quick demo data
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
+If you want a fast demo without preparing your own file, upload [examples/sample_ab_test.csv](examples/sample_ab_test.csv) in the `Raw CSV (Automated Analysis)` tab.
 
----
+## Testing
 
-## Usage Examples
+```bash
+uv run --extra dev pytest
+```
 
-### Example 1: Unrealistic Target Detection
-**Input:** 1% lift, 1,000 daily visitors, 1 week wait
-**Output:**
-- Calculated MDE: 15%
-- Sanity check: "Unrealistic - a 15% lift on checkout is extremely rare"
+The current suite covers:
 
-### Example 2: CSV Analysis
-**Input:** Upload CSV with columns `user_uuid`, `bucket_id`, `has_purchased`
-**Output:**
-- Maps: variant=`bucket_id`, outcome=`has_purchased` (binary)
-- Runs Chi-squared test
-- Result: "Variant B wins (p=0.03)"
+- frequentist helpers
+- Bayesian decision logic
+- causal simulation checks
+- LLM JSON retry logic
+- dataframe validation contracts
 
----
+The repo also includes a lightweight GitHub Actions workflow at `.github/workflows/tests.yml` that installs `requirements-dev.txt` and runs `pytest`.
 
-## License
+## Notes on method choice
 
-MIT License. Built for the Open Source Data Science community.
+- Use the frequentist path when you need a familiar significance test and confidence interval.
+- If you reviewed several primary metrics, use the adjusted alpha shown in the app rather than treating every p-value as if it came from a single test.
+- If you peeked before the planned stop date, treat the frequentist result as directional unless you used a sequential design.
+- Use the Bayesian path when you want a direct probability statement and a loss-aware ship/hold decision.
+- For continuous metrics with heavy right skew, the mean-based Welch test can be brittle. Revenue often benefits from a log transform or a bootstrap check before you trust the result.
 
----
+## Limitations
+
+- Column mapping is validated against the dataframe schema, but semantic correctness is still on you. A model can pick a real column for the wrong role.
+- DiD and RDD surface diagnostics, but those checks are warnings, not proofs of identification.
+- The app includes Bonferroni-style multiple-comparison guardrails and a peeking warning, but it does not implement a full sequential-testing design.
+- The RDD bandwidth selector is a transparent rule of thumb, not an optimal bandwidth estimator.
+- PSM and CausalImpact remain code-generation paths, not in-app estimators.
 
 ## Contact
 
-Tomasz Solis
-- [LinkedIn](https://linkedin.com/in/tomaszsolis)
-- [GitHub](https://github.com/tomasz-solis)
+Tomasz Solis — [LinkedIn](https://linkedin.com/in/tomaszsolis) · [GitHub](https://github.com/tomasz-solis)
