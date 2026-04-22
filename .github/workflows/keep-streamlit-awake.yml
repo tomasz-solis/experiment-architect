@@ -30,25 +30,56 @@ jobs:
 
       - name: Ping Streamlit app
         run: |
-          http_code="$(
+          app_url="${STREAMLIT_APP_URL}"
+          if [[ ! "${app_url}" =~ ^https?:// ]]; then
+            app_url="https://${app_url}"
+          fi
+
+          cookie_jar="$(mktemp)"
+          response_file="$(mktemp)"
+          trap 'rm -f "${cookie_jar}" "${response_file}"' EXIT
+
+          set +e
+          curl_meta="$(
             curl --location --silent --show-error \
-              --output response.html \
-              --write-out "%{http_code}" \
+              --cookie "${cookie_jar}" \
+              --cookie-jar "${cookie_jar}" \
+              --output "${response_file}" \
+              --write-out "code=%{http_code}\nurl=%{url_effective}\nredirects=%{num_redirects}\n" \
               --max-time 45 \
               --retry 2 \
               --retry-delay 5 \
               --user-agent "github-actions-streamlit-keepalive" \
-              "${STREAMLIT_APP_URL}"
+              "${app_url}"
           )"
+          curl_status=$?
+          set -e
 
-          echo "HTTP status: ${http_code}"
-
-          if [ "${http_code}" -ge 400 ]; then
-            echo "Streamlit app returned an HTTP error."
+          if [ "${curl_status}" -ne 0 ]; then
+            echo "Curl could not reach the Streamlit app."
             exit 1
           fi
 
-          if grep -Eiq "gone to sleep|get this app back up" response.html; then
+          http_code="$(printf '%s\n' "${curl_meta}" | sed -n 's/^code=//p')"
+          effective_url="$(printf '%s\n' "${curl_meta}" | sed -n 's/^url=//p')"
+          redirect_count="$(printf '%s\n' "${curl_meta}" | sed -n 's/^redirects=//p')"
+
+          echo "Requested URL: ${app_url}"
+          echo "HTTP status: ${http_code}"
+          echo "Effective URL: ${effective_url}"
+          echo "Redirects followed: ${redirect_count}"
+
+          if [ "${http_code}" -ge 400 ]; then
+            if grep -Eiq "share\.streamlit\.io/errors/not_found" "${response_file}"; then
+              echo "Streamlit returned the not-found page."
+              echo "Check whether STREAMLIT_APP_URL is current and whether the app is still deployed."
+            else
+              echo "Streamlit app returned an HTTP error."
+            fi
+            exit 1
+          fi
+
+          if grep -Eiq "gone to sleep|get this app back up" "${response_file}"; then
             echo "The app appears to be asleep already."
             echo "Wake it manually once in Streamlit Cloud, then this workflow can keep it warm."
             exit 1
