@@ -81,3 +81,46 @@ class TestDecisionRecommendation:
     def test_negative_expected_loss_is_rejected(self) -> None:
         with pytest.raises(ValueError):
             get_decision_recommendation(0.9, expected_loss=-0.1)
+
+    def test_relative_tolerance_uses_baseline(self) -> None:
+        """With baseline-relative tolerance, a 1% baseline gets a tight cutoff."""
+        # baseline = 0.01, default relative = 0.05 -> tolerance = 0.0005
+        # expected_loss = 0.001 is ABOVE tolerance, so should wait
+        recommendation, confidence = get_decision_recommendation(
+            0.97,
+            expected_loss=0.001,
+            baseline_for_relative_tolerance=0.01,
+        )
+        assert recommendation == "Need more data"
+        assert confidence == "uncertain"
+
+    def test_relative_tolerance_handles_high_baseline(self) -> None:
+        """With baseline-relative tolerance, a 50% baseline gets a generous cutoff."""
+        # baseline = 0.5, default relative = 0.05 -> tolerance = 0.025
+        # expected_loss = 0.02 is BELOW tolerance, so high-prob ships
+        recommendation, confidence = get_decision_recommendation(
+            0.97,
+            expected_loss=0.02,
+            baseline_for_relative_tolerance=0.5,
+        )
+        assert "Ship" in recommendation
+        assert confidence == "high"
+
+    def test_explicit_tolerance_overrides_baseline(self) -> None:
+        """Explicit loss_tolerance takes precedence over relative resolution."""
+        recommendation, _ = get_decision_recommendation(
+            0.97,
+            expected_loss=0.001,
+            loss_tolerance=0.0005,
+            baseline_for_relative_tolerance=0.5,  # would yield 0.025, ignored
+        )
+        # expected_loss 0.001 > explicit tolerance 0.0005 -> wait
+        assert recommendation == "Need more data"
+
+    def test_negative_baseline_for_relative_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must be positive"):
+            get_decision_recommendation(
+                0.9,
+                expected_loss=0.001,
+                baseline_for_relative_tolerance=-0.1,
+            )
