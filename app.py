@@ -17,6 +17,13 @@ from llm.client import ask_agent_json as llm_ask_agent_json
 from llm.client import create_llm_client
 from stats.bayesian import beta_binomial_analysis, get_decision_recommendation
 from stats.causal import difference_in_differences, regression_discontinuity, select_causal_method
+from stats.decision_cards import (
+    build_bayesian_card,
+    build_count_mismatch_card,
+    build_input_mismatch_summary,
+    build_manual_frequentist_card,
+    build_weakest_signal_card,
+)
 from stats.frequentist import (
     build_frequentist_guardrails,
     calculate_lift,
@@ -336,17 +343,13 @@ def manual_snapshot() -> dict[str, Any]:
     peeked_early = bool(st.session_state.get("manual_peeked_early", False))
 
     if conversions_a > visitors_a or conversions_b > visitors_b:
+        mismatch = build_input_mismatch_summary()
+        mismatch_card = build_count_mismatch_card()
         return {
-            "kicker": "Editorial experiment review",
-            "title": "Read the result, but audit the counts first.",
-            "body": (
-                "This lens compares significance, expected loss, and structural warnings in one place. "
-                "Right now the raw counts are inconsistent, so the review stops at the input layer."
-            ),
-            "pills": ["Manual read", "Counts only", "Input mismatch"],
+            **mismatch,
             "cards": [
                 build_card("Review lens", "Manual read", "Use counts when you do not need raw rows.", "blue", anchor=True),
-                build_card("Validation", "Count mismatch", "Conversions cannot exceed visitors.", "red"),
+                build_card("Validation", mismatch_card["value"], mismatch_card["meta"], mismatch_card["tone"]),
                 build_card("Bayesian read", "On hold", "The posterior only matters after the counts are valid.", "amber"),
                 build_card("Weakest signal", "Input quality", "Fix the counts before reading the result.", "red"),
             ],
@@ -362,6 +365,7 @@ def manual_snapshot() -> dict[str, Any]:
     recommendation, confidence = get_decision_recommendation(
         bayes["prob_b_wins"],
         bayes["expected_loss"],
+        baseline_for_relative_tolerance=cr_a,
     )
     guardrails = build_frequentist_guardrails(
         n_comparisons=n_comparisons,
@@ -370,39 +374,25 @@ def manual_snapshot() -> dict[str, Any]:
     adjusted_alpha = float(guardrails["adjusted_alpha"])
     has_srm, _ = check_srm(visitors_a, visitors_b)
 
-    if test_results["p_value"] < adjusted_alpha and not has_srm and not peeked_early and bool(test_results["chi_square_valid"]):
-        frequentist_value = "Decision-ready"
-        frequentist_meta = f"p={test_results['p_value']:.4f} and the structure is clean."
-        frequentist_tone = "mint"
-    elif test_results["p_value"] < adjusted_alpha:
-        frequentist_value = "Usable with caution"
-        frequentist_meta = f"p={test_results['p_value']:.4f}, but the read has structural caveats."
-        frequentist_tone = "amber"
-    else:
-        frequentist_value = "Need more data"
-        frequentist_meta = f"p={test_results['p_value']:.4f} at alpha {adjusted_alpha:.4f}."
-        frequentist_tone = "amber"
-
-    if has_srm:
-        weakest_value = "Sample ratio mismatch"
-        weakest_meta = "The randomization split does not look like 50/50."
-        weakest_tone = "red"
-    elif not bool(test_results["chi_square_valid"]):
-        weakest_value = "Low expected cell counts"
-        weakest_meta = "Binary significance is fragile with sparse cells."
-        weakest_tone = "amber"
-    elif peeked_early:
-        weakest_value = "Early peeking"
-        weakest_meta = "The nominal p-value is optimistic without a stop rule."
-        weakest_tone = "amber"
-    elif bool(guardrails["alpha_adjusted"]):
-        weakest_value = "Multiple primary metrics"
-        weakest_meta = f"The decision threshold tightened to {adjusted_alpha:.4f}."
-        weakest_tone = "amber"
-    else:
-        weakest_value = "No structural red flag"
-        weakest_meta = "The read is clean enough to interpret directly."
-        weakest_tone = "mint"
+    frequentist_card = build_manual_frequentist_card(
+        p_value=float(test_results["p_value"]),
+        adjusted_alpha=adjusted_alpha,
+        has_srm=has_srm,
+        peeked_early=peeked_early,
+        chi_square_valid=bool(test_results["chi_square_valid"]),
+    )
+    weakest_card = build_weakest_signal_card(
+        has_srm=has_srm,
+        chi_square_valid=bool(test_results["chi_square_valid"]),
+        peeked_early=peeked_early,
+        alpha_adjusted=bool(guardrails["alpha_adjusted"]),
+        adjusted_alpha=adjusted_alpha,
+    )
+    bayesian_card = build_bayesian_card(
+        recommendation=recommendation,
+        confidence=confidence,
+        expected_loss=float(bayes["expected_loss"]),
+    )
 
     return {
         "kicker": "Editorial experiment review",
@@ -419,9 +409,9 @@ def manual_snapshot() -> dict[str, Any]:
         ],
         "cards": [
             build_card("Review lens", "Manual read", "Counts first, narrative second.", "blue", anchor=True),
-            build_card("Frequentist read", frequentist_value, frequentist_meta, frequentist_tone),
-            build_card("Bayesian read", recommendation, f"Expected loss {bayes['expected_loss']:.3%}.", "mint" if confidence == "high" else "amber"),
-            build_card("Weakest signal", weakest_value, weakest_meta, weakest_tone),
+            build_card("Frequentist read", frequentist_card["value"], frequentist_card["meta"], frequentist_card["tone"]),
+            build_card("Bayesian read", bayesian_card["value"], bayesian_card["meta"], bayesian_card["tone"]),
+            build_card("Weakest signal", weakest_card["value"], weakest_card["meta"], weakest_card["tone"]),
         ],
     }
 
@@ -831,6 +821,7 @@ if st.button("Read the result", key="manual_result_button"):
             recommendation, confidence = get_decision_recommendation(
                 manual_bayes["prob_b_wins"],
                 manual_bayes["expected_loss"],
+                baseline_for_relative_tolerance=cr_a,
             )
             show_bayesian_decision(
                 recommendation,
@@ -986,6 +977,7 @@ if uploaded_file is not None:
                         recommendation, confidence = get_decision_recommendation(
                             csv_bayes["prob_b_wins"],
                             csv_bayes["expected_loss"],
+                            baseline_for_relative_tolerance=float(mean_a),
                         )
                         show_bayesian_decision(
                             recommendation,
