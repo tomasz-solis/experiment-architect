@@ -18,6 +18,15 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import is_datetime64_any_dtype, is_numeric_dtype
 
+from config import (
+    PARALLEL_TRENDS_PASS_THRESHOLD,
+    RDD_COEFFICIENT_STABILITY_THRESHOLD,
+    RDD_DENSITY_RATIO_LOWER,
+    RDD_DENSITY_RATIO_UPPER,
+    RDD_DENSITY_WINDOW_FRAC,
+    RDD_MIN_SIDE_OBSERVATIONS,
+)
+
 
 def _build_post_indicator(time_values: pd.Series, intervention_point: Any) -> pd.Series:
     """Build a post-period indicator that works for numeric, datetime, or label periods."""
@@ -125,7 +134,7 @@ def _select_rdd_bandwidth(
     df: pd.DataFrame,
     running_var: str,
     cutoff: float,
-    min_side_observations: int = 30,
+    min_side_observations: int = RDD_MIN_SIDE_OBSERVATIONS,
 ) -> float:
     """Choose a rule-of-thumb local bandwidth for RDD estimation.
 
@@ -224,7 +233,7 @@ def check_parallel_trends(
     p_value = float(pre_model.pvalues["_pre_interact"])
 
     return {
-        "passes": p_value > 0.10,
+        "passes": p_value > PARALLEL_TRENDS_PASS_THRESHOLD,
         "trend_interaction_pvalue": p_value,
         "n_pre_periods": int(pre[time_col].nunique()),
         "test_ran": True,
@@ -310,11 +319,11 @@ def regression_discontinuity(
     )
     bandwidth_method = "user_supplied" if bandwidth is not None else "rule_of_thumb"
 
-    window = rv_std * 0.2
+    window = rv_std * RDD_DENSITY_WINDOW_FRAC
     n_below = int(((df[running_var] >= cutoff - window) & (df[running_var] < cutoff)).sum())
     n_above = int(((df[running_var] >= cutoff) & (df[running_var] < cutoff + window)).sum())
     density_ratio = n_above / n_below if n_below > 0 else float("inf")
-    density_ok = 0.7 <= density_ratio <= 1.4
+    density_ok = RDD_DENSITY_RATIO_LOWER <= density_ratio <= RDD_DENSITY_RATIO_UPPER
 
     full_result = _fit_rdd_model(df, running_var, treatment_col, outcome_col, cutoff)
     local_fit = _fit_rdd_at_bandwidth(
@@ -394,7 +403,9 @@ def regression_discontinuity(
         ),
         "full_sample_coefficient": round(float(full_result["coefficient"]), 6),
         "coefficient_shift_pct": round(float(max_shift) * 100, 1),
-        "coefficient_stable_under_bandwidth": bool(max_shift < 0.30),
+        "coefficient_stable_under_bandwidth": bool(
+            max_shift < RDD_COEFFICIENT_STABILITY_THRESHOLD
+        ),
         "bandwidth_sweep": bandwidth_sweep,
     }
 
