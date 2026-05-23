@@ -6,6 +6,7 @@ import importlib.util
 import json
 import logging
 import os
+import random
 import time
 from typing import Any, Sequence
 
@@ -149,6 +150,15 @@ def _build_retry_prompt(user_prompt: str, expected_keys: Sequence[str], reason: 
     )
 
 
+def _retry_backoff(attempt: int, base_seconds: float = 0.25, jitter_seconds: float = 0.1) -> None:
+    """Sleep with linear backoff plus random jitter.
+
+    Jitter is added so multiple concurrent callers do not retry in
+    lockstep. The total wait is ``base_seconds * attempt + Uniform(0, jitter_seconds)``.
+    """
+    time.sleep(base_seconds * attempt + random.uniform(0, jitter_seconds))
+
+
 def ask_agent_json(
     client: LLMProvider | None,
     provider: str,
@@ -203,7 +213,7 @@ def ask_agent_json(
                 st.error("The model returned malformed JSON twice. Please try again.")
                 return None
             retry_prompt = _build_retry_prompt(user_prompt, expected_keys, "it was not valid JSON")
-            time.sleep(0.25 * attempt)
+            _retry_backoff(attempt)
             continue
 
         if not isinstance(payload, dict):
@@ -222,7 +232,7 @@ def ask_agent_json(
                 expected_keys,
                 f"it was a JSON {type(payload).__name__}, not an object",
             )
-            time.sleep(0.25 * attempt)
+            _retry_backoff(attempt)
             continue
 
         missing_keys = [key for key in expected_keys if key not in payload]
@@ -246,7 +256,7 @@ def ask_agent_json(
                 expected_keys,
                 f"it was missing these keys: {', '.join(missing_keys)}",
             )
-            time.sleep(0.25 * attempt)
+            _retry_backoff(attempt)
             continue
 
         logger.info(
