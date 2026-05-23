@@ -169,6 +169,16 @@ class TestParallelTrends:
         assert not result["passes"]
         assert result["trend_interaction_pvalue"] < 0.10
 
+    def test_parallel_trends_skips_when_only_one_pre_period(self) -> None:
+        """With one pre-period, the trend test cannot run; the result marks it skipped."""
+        df = make_did_data(true_effect=5.0)
+        # Keep only one pre-period (period=1) plus all post-periods
+        truncated = df[df["period"] != 0].copy()
+        result = check_parallel_trends(truncated, "period", "treated", "outcome", 2)
+        assert result["passes"] is True  # benefit-of-doubt when test can't run
+        assert result["test_ran"] is False
+        assert result["trend_interaction_pvalue"] is None
+
 
 class TestRegressionDiscontinuity:
     """Tests for the RDD implementation."""
