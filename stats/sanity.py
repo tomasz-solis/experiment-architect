@@ -10,9 +10,7 @@ testable, and don't ask the model to make statistical judgments.
 
 from typing import List, Literal, Tuple
 
-import numpy as np
-
-from config import Z_ALPHA, Z_BETA
+from stats.frequentist import calculate_sample_size
 
 Status = Literal["ok", "caution", "fail"]
 CheckResult = Tuple[str, Status, str]
@@ -26,31 +24,24 @@ def check_traffic_vs_mde(
 ) -> CheckResult:
     """Check whether the traffic budget is sufficient to detect the target MDE.
 
-    Computes required sample size from the same formula as calculate_sample_size
-    and compares it to the available budget.
-
-    Args:
-        baseline: Current conversion rate (e.g. 0.10 for 10%).
-        mde: Target relative lift (e.g. 0.10 for 10% relative improvement).
-        daily_traffic: Total daily visitors across both groups.
-        weeks: Planned experiment duration.
-
-    Returns:
-        CheckResult tuple (name, status, reason).
+    Delegates to calculate_sample_size for the required-n calculation so the
+    sanity check and the design tab cannot diverge.
     """
+    size = calculate_sample_size(
+        baseline=baseline,
+        mde=mde,
+        daily_traffic=daily_traffic,
+        split_ratio=0.5,
+    )
+    required_n = size["n_total"]
     total_n = daily_traffic * weeks * 7
-    p2 = baseline * (1 + mde)
-    delta = p2 - baseline
-    pooled_var = (baseline * (1 - baseline) + p2 * (1 - p2)) / 2
-    z_score = (Z_ALPHA + Z_BETA) ** 2
-    required_n = z_score * pooled_var * 4 / (delta ** 2)
     ratio = total_n / required_n
 
     if ratio >= 1.5:
         return (
             "Traffic vs MDE",
             "ok",
-            f"Budget is {ratio:.1f}× the required sample ({int(required_n):,} needed, {int(total_n):,} available).",
+            f"Budget is {ratio:.1f}× the required sample ({required_n:,} needed, {total_n:,} available).",
         )
     if ratio >= 1.0:
         return (
@@ -63,7 +54,7 @@ def check_traffic_vs_mde(
         "Traffic vs MDE",
         "fail",
         f"Budget covers only {ratio:.0%} of the required sample. "
-        f"Need {int(required_n):,} visitors but only {int(total_n):,} available. "
+        f"Need {required_n:,} visitors but only {total_n:,} available. "
         "Increase traffic, extend duration, or raise the target MDE.",
     )
 
@@ -73,12 +64,6 @@ def check_mde_plausibility(mde: float) -> CheckResult:
 
     This is a heuristic, not a hard rule. The thresholds are calibrated
     against typical conversion-rate experiments in B2C/B2B products.
-
-    Args:
-        mde: Target relative lift (e.g. 0.10 for 10% relative improvement).
-
-    Returns:
-        CheckResult tuple (name, status, reason).
     """
     if mde > 0.5:
         return (
@@ -110,12 +95,6 @@ def check_baseline_stability(baseline: float) -> CheckResult:
     The two-proportion z-test assumes np >= 5 and n(1-p) >= 5 per cell.
     Very low or very high baselines need much larger samples than the
     standard formula predicts, because the normal approximation is poor.
-
-    Args:
-        baseline: Current conversion rate (e.g. 0.10 for 10%).
-
-    Returns:
-        CheckResult tuple (name, status, reason).
     """
     if baseline < 0.01 or baseline > 0.99:
         return (
@@ -140,17 +119,7 @@ def run_all_checks(
     daily_traffic: int,
     weeks: int,
 ) -> List[CheckResult]:
-    """Run all sanity checks and return results.
-
-    Args:
-        baseline: Current conversion rate.
-        mde: Target relative lift.
-        daily_traffic: Total daily visitors.
-        weeks: Planned experiment duration in weeks.
-
-    Returns:
-        List of CheckResult tuples, one per rule.
-    """
+    """Run all sanity checks and return their results in order."""
     return [
         check_traffic_vs_mde(baseline, mde, daily_traffic, weeks),
         check_mde_plausibility(mde),
