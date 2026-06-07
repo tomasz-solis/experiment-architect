@@ -66,7 +66,7 @@ RDD_MIN_SIDE_OBSERVATIONS = 30
 
 # Streamlit config
 PAGE_TITLE = "Test Architect"
-PAGE_ICON = "🏗️"
+PAGE_ICON = "Build"
 PAGE_LAYOUT = "wide"
 
 # LLM Models

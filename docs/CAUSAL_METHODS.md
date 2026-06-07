@@ -5,7 +5,7 @@ the causal module: why clustered standard errors, why the parallel-trends
 test runs the way it does, and why the RDD bandwidth uses a rule of thumb
 rather than an optimal estimator.
 
-## DiD: cluster-robust standard errors by unit
+## DiD: clustered standard errors by unit
 
 The DiD estimator regresses `outcome ~ treated + post + treated:post` and
 clusters standard errors by `unit`. Clustering matters when observations
@@ -25,7 +25,7 @@ wild-cluster bootstrap (Cameron, Gelbach, Miller 2008) or CR2.
 The pre-period model is `outcome ~ treated + time + treated:time` fit on
 pre-intervention rows only. The interaction p-value is the test statistic.
 We use p > 0.10 (not 0.05) as the "pass" threshold because rejecting
-parallel trends is the more costly mistake — it blocks the entire DiD
+parallel trends is the more costly mistake - it blocks the entire DiD
 analysis.
 
 Roth, Sant'Anna, Bilinski, and Poe (2023, "What's Trending in
@@ -41,14 +41,14 @@ covered by `test_parallel_trends_skips_when_only_one_pre_period`.
 
 ## RDD: rule-of-thumb local bandwidth
 
-Bandwidth selection is `1.84 * robust_scale * n^(-1/5)`, the
-Imbens-Kalyanaraman rule of thumb for sharp RDD. The robust scale uses
+Bandwidth selection is `1.84 * scale * n^(-1/5)`, the
+Imbens-Kalyanaraman rule of thumb for sharp RDD. The scale term uses
 the smaller of std and IQR/1.349, falling back through median-distance
 to 1.0 on pathological data.
 
 This is intentionally not the optimal MSE-minimizing bandwidth (Calonico,
 Cattaneo, Titiunik 2014). The CCT procedure requires bias-correction
-terms that add complexity beyond what a portfolio tool aims to provide.
+terms that add complexity beyond what this app aims to provide.
 The bandwidth sweep (local / half / full) with the
 `coefficient_stable_under_bandwidth` flag is the sensitivity check that
 catches the cases where the rule of thumb misleads. The flag fires when
@@ -107,8 +107,8 @@ their advertised bands, not that any single point estimate is exact.
   Difference-in-Differences?" Journal of Econometrics.
 - Imbens, Kalyanaraman (2012). "Optimal Bandwidth Choice for the
   Regression Discontinuity Estimator." Review of Economic Studies.
-- Calonico, Cattaneo, Titiunik (2014). "Robust Nonparametric Confidence
-  Intervals for Regression-Discontinuity Designs." Econometrica.
+- Calonico, Cattaneo, Titiunik (2014). Paper on nonparametric confidence
+  intervals for regression-discontinuity designs. Econometrica.
 - Imbens, Lemieux (2008). "Regression Discontinuity Designs: A Guide to
   Practice." Journal of Econometrics.
 - McCrary (2008). "Manipulation of the Running Variable in the

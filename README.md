@@ -113,4 +113,4 @@ The repo also includes a lightweight GitHub Actions workflow at `.github/workflo
 
 ## Contact
 
-Tomasz Solis — [LinkedIn](https://linkedin.com/in/tomaszsolis) · [GitHub](https://github.com/tomasz-solis)
+Tomasz Solis - [LinkedIn](https://linkedin.com/in/tomaszsolis) · [GitHub](https://github.com/tomasz-solis)

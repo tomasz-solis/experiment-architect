@@ -84,7 +84,7 @@ def check_mde_plausibility(mde: float) -> CheckResult:
             "MDE plausibility",
             "caution",
             f"Target lift of {mde:.1%} is very small. "
-            "The required sample size will be large — confirm the business value justifies the wait.",
+            "The required sample size will be large - confirm the business value justifies the wait.",
         )
     return ("MDE plausibility", "ok", f"Target lift of {mde:.1%} is within typical range.")
 
