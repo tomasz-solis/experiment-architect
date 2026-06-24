@@ -77,7 +77,7 @@ If you want the keep-awake workflow to ping the deployed app, add a repository v
 
 ## Quick demo data
 
-If you want a fast demo without preparing your own file, upload [examples/sample_ab_test.csv](examples/sample_ab_test.csv) in the `Raw CSV (Automated Analysis)` tab.
+If you want a fast demo without preparing your own file, upload [examples/sample_ab_test.csv](examples/sample_ab_test.csv) in the **Raw CSV audit** lens. It contains 1,000 rows (500 control / 500 treatment), a binary `converted` column, and a continuous `revenue` column — enough to exercise both analysis paths.
 
 ## Testing
 
@@ -101,7 +101,7 @@ The repo also includes a lightweight GitHub Actions workflow at `.github/workflo
 - If you reviewed several primary metrics, use the adjusted alpha shown in the app rather than treating every p-value as if it came from a single test.
 - If you peeked before the planned stop date, treat the frequentist result as directional unless you used a sequential design.
 - Use the Bayesian path when you want a direct probability statement and a loss-aware ship/hold decision.
-- For continuous metrics with heavy right skew, the mean-based Welch test can be brittle. Revenue often benefits from a log transform or a bootstrap check before you trust the result.
+- For continuous metrics with heavy right skew, the mean-based Welch test can be brittle. For small groups (30 or fewer observations) the app automatically switches to a percentile bootstrap confidence interval and an unequal-variance effect size; for larger skewed samples a log transform is still worth considering before you trust the result.
 
 ## Limitations
 
