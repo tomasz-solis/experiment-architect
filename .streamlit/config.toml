@@ -1,0 +1,12 @@
+# The app ships a single, hand-tuned LIGHT design system (see
+# ui/components.inject_app_styles). Without pinning the base theme, Streamlit
+# follows the viewer's OS/browser preference, so a viewer in dark mode gets
+# white default text (metric values, captions, dataframes, alert bodies) on the
+# hard-coded light cards -- i.e. invisible. Pinning base="light" makes every
+# default widget render dark-on-light to match the design system.
+[theme]
+base = "light"
+primaryColor = "#4f6dff"           # --blue
+backgroundColor = "#eff2f7"        # --bg (the .stApp gradient layers over this)
+secondaryBackgroundColor = "#ffffff"
+textColor = "#10131a"              # --ink
