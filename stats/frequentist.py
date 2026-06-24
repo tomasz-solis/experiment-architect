@@ -319,15 +319,6 @@ def bootstrap_ci_relative_lift_continuous(
     return lower, upper
 
 
-def is_significant(p_value: float, alpha: float = ALPHA) -> bool:
-    """Return whether a p-value passes the chosen alpha threshold."""
-    if not 0 <= p_value <= 1:
-        raise ValueError("p_value must be between 0 and 1.")
-    if not 0 < alpha < 1:
-        raise ValueError("alpha must be between 0 and 1.")
-    return p_value < alpha
-
-
 def calculate_sample_size(
     baseline: float,
     mde: float,

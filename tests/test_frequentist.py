@@ -15,7 +15,6 @@ from stats.frequentist import (
     chi_squared_test,
     confidence_interval_binary,
     confidence_interval_continuous,
-    is_significant,
     welch_t_test,
 )
 
@@ -170,19 +169,6 @@ class TestBootstrapCI:
         group_b = pd.Series([1.0, 2.0, 3.0])
         with pytest.raises(ValueError, match="missing values"):
             bootstrap_ci_relative_lift_continuous(group_a, group_b)
-
-
-class TestSignificance:
-    """Tests for p-value significance helpers."""
-
-    def test_significant(self) -> None:
-        assert is_significant(0.01)
-        assert is_significant(0.04)
-        assert is_significant(0.01, alpha=0.01) is False
-
-    def test_not_significant(self) -> None:
-        assert not is_significant(0.06)
-        assert not is_significant(0.5)
 
 
 class TestGuardrails:

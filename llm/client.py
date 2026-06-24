@@ -17,28 +17,6 @@ from llm.providers import AnthropicProvider, GeminiProvider, LLMProvider, OpenAI
 
 logger = logging.getLogger(__name__)
 
-OPTIONAL_DEPS: dict[str, tuple[str, str]] = {
-    "anthropic": ("anthropic", "pip install anthropic"),
-    "gemini": ("google.generativeai", "pip install google-generativeai"),
-    "statsmodels": ("statsmodels.api", "pip install statsmodels"),
-}
-
-
-def check_optional_deps() -> dict[str, bool]:
-    """Report whether the optional runtime dependencies are installed."""
-    availability: dict[str, bool] = {}
-    for package_name, (import_path, _) in OPTIONAL_DEPS.items():
-        availability[package_name] = importlib.util.find_spec(import_path) is not None
-
-    return availability
-
-
-def _normalize_provider_name(provider: str | None) -> str:
-    """Return a normalized provider name with a safe default."""
-    normalized = (provider or "").strip().lower()
-    return normalized or "openai"
-
-
 def get_llm_provider() -> str:
     """Return the configured LLM provider name."""
     provider = os.getenv("LLM_PROVIDER")
@@ -49,7 +27,7 @@ def get_llm_provider() -> str:
         except (KeyError, FileNotFoundError):
             provider = "openai"
 
-    return _normalize_provider_name(provider)
+    return (provider or "").strip().lower() or "openai"
 
 
 def get_api_key(provider: str) -> str | None:
@@ -74,15 +52,21 @@ def get_api_key(provider: str) -> str | None:
         return None
 
 
+_OPTIONAL_DEP_INSTALL: dict[str, tuple[str, str]] = {
+    "anthropic": ("anthropic", "pip install anthropic"),
+    "gemini": ("google.generativeai", "pip install google-generativeai"),
+}
+
+
 def create_llm_client() -> tuple[LLMProvider | None, bool, str]:
     """Create the configured LLM client when credentials and deps are available."""
     provider = get_llm_provider()
-    availability = check_optional_deps()
 
-    if provider in ("anthropic", "gemini") and not availability.get(provider, False):
-        install_hint = OPTIONAL_DEPS[provider][1]
-        logger.warning("%s dependency missing. Install with: %s", provider, install_hint)
-        return None, False, provider
+    if provider in _OPTIONAL_DEP_INSTALL:
+        import_path, install_hint = _OPTIONAL_DEP_INSTALL[provider]
+        if importlib.util.find_spec(import_path) is None:
+            logger.warning("%s dependency missing. Install with: %s", provider, install_hint)
+            return None, False, provider
 
     api_key = get_api_key(provider)
     if not api_key:

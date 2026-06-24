@@ -209,10 +209,6 @@ def test_create_llm_client_disables_ai_without_api_key(
 ) -> None:
     """Missing credentials should disable the LLM layer cleanly."""
     monkeypatch.setattr("llm.client.get_llm_provider", lambda: "openai")
-    monkeypatch.setattr(
-        "llm.client.check_optional_deps",
-        lambda: {"anthropic": True, "gemini": True},
-    )
     monkeypatch.setattr("llm.client.get_api_key", lambda provider: None)
 
     client, enabled, provider = create_llm_client()

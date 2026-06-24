@@ -434,11 +434,6 @@ def inject_app_styles() -> None:
     )
 
 
-def render_html_block(markup: str) -> None:
-    """Render a raw HTML fragment through Streamlit without markdown indentation issues."""
-    st.markdown(markup, unsafe_allow_html=True)
-
-
 def render_sidebar_intro(
     title: str,
     body: str,
@@ -447,13 +442,14 @@ def render_sidebar_intro(
 ) -> None:
     """Render the dark sidebar brand block."""
     provider_state = f"AI mapping ready via {provider.upper()}" if ai_enabled else "AI mapping disabled"
-    render_html_block(
+    st.markdown(
         f'<div class="editorial-sidebar">'
         f'<p class="editorial-kicker">Experiment review</p>'
         f"<h2>{escape(title)}</h2>"
         f"<p>{escape(body)}</p>"
         f'<span class="sidebar-chip">{escape(provider_state)}</span>'
-        f"</div>"
+        f"</div>",
+        unsafe_allow_html=True,
     )
 
 
@@ -465,13 +461,14 @@ def render_hero_card(
 ) -> None:
     """Render the large dark hero card at the top of the page."""
     pill_markup = "".join(f'<span class="pill">{escape(pill)}</span>' for pill in pills)
-    render_html_block(
+    st.markdown(
         f'<div class="editorial-hero">'
         f'<p class="editorial-kicker">{escape(kicker)}</p>'
         f'<h1 class="hero-title">{escape(title)}</h1>'
         f'<p class="hero-body">{escape(body)}</p>'
         f'<div class="pill-row">{pill_markup}</div>'
-        f"</div>"
+        f"</div>",
+        unsafe_allow_html=True,
     )
 
 
@@ -489,7 +486,7 @@ def render_summary_cards(cards: list[SummaryCard]) -> None:
             f"</div>"
         )
 
-    render_html_block(f'<div class="summary-grid">{"".join(card_markup)}</div>')
+    st.markdown(f'<div class="summary-grid">{"".join(card_markup)}</div>', unsafe_allow_html=True)
 
 
 def render_empty_state_cards(cards: list[dict[str, str]]) -> None:
@@ -504,33 +501,35 @@ def render_empty_state_cards(cards: list[dict[str, str]]) -> None:
             f"</div>"
         )
 
-    render_html_block(f'<div class="empty-grid">{"".join(markup)}</div>')
+    st.markdown(f'<div class="empty-grid">{"".join(markup)}</div>', unsafe_allow_html=True)
 
 
 def render_signal_header(signal: str, title: str, body: str) -> None:
     """Render the editorial section header used before each major section."""
-    render_html_block(
+    st.markdown(
         f'<div class="signal-header">'
         f'<p class="signal-label">{escape(signal)}</p>'
         f"<h2>{escape(title)}</h2>"
         f'<p class="signal-body">{escape(body)}</p>'
-        f"</div>"
+        f"</div>",
+        unsafe_allow_html=True,
     )
 
 
 def render_section_note(label: str, body: str) -> None:
     """Render a short glass-style note above a widget cluster."""
-    render_html_block(
+    st.markdown(
         f'<div class="section-note">'
         f'<p class="note-label">{escape(label)}</p>'
         f'<p class="note-body">{escape(body)}</p>'
-        f"</div>"
+        f"</div>",
+        unsafe_allow_html=True,
     )
 
 
 def render_section_rule() -> None:
     """Render a visible separator between major page sections."""
-    render_html_block('<hr class="editorial-rule" />')
+    st.markdown('<hr class="editorial-rule" />', unsafe_allow_html=True)
 
 
 def show_data_quality(df: pd.DataFrame) -> None:
@@ -543,11 +542,6 @@ def show_data_quality(df: pd.DataFrame) -> None:
 
     with st.expander("View full dataset"):
         st.dataframe(df)
-
-
-def show_data_preview(df: pd.DataFrame, n_rows: int = 3) -> None:
-    """Render the first few rows of a DataFrame."""
-    st.write("Preview:", df.head(n_rows))
 
 
 def show_srm_warning(ratio: float, threshold: float = 0.05) -> None:
