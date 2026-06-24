@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 
+
 def validate_mapping_columns(
     mapping: dict[str, Any],
     df: pd.DataFrame,
