@@ -8,7 +8,8 @@ import logging
 import os
 import random
 import time
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import streamlit as st
 
