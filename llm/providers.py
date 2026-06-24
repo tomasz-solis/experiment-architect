@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, cast
+
+from openai import Omit, OpenAI, omit
+from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat.completion_create_params import ResponseFormat
 
 from config import (
     LLM_MAX_TOKENS,
@@ -27,24 +31,23 @@ class OpenAIProvider:
 
     def __init__(self, api_key: str) -> None:
         """Create an OpenAI client for the configured model."""
-        from openai import OpenAI
-
         self.client = OpenAI(api_key=api_key)
         self.name = "openai"
 
     def call(self, system_role: str, user_prompt: str, json_mode: bool = False) -> str:
         """Send a request to OpenAI and return the response text."""
-        response_format = {"type": "json_object"} if json_mode else None
+        response_format: ResponseFormat | Omit = {"type": "json_object"} if json_mode else omit
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": system_role},
+            {"role": "user", "content": user_prompt},
+        ]
         response = self.client.chat.completions.create(
             model=MODEL_OPENAI,
-            messages=[
-                {"role": "system", "content": system_role},
-                {"role": "user", "content": user_prompt},
-            ],
+            messages=messages,
             temperature=LLM_TEMPERATURE,
             response_format=response_format,
         )
-        return response.choices[0].message.content
+        return response.choices[0].message.content or ""
 
 
 class AnthropicProvider:
@@ -69,7 +72,7 @@ class AnthropicProvider:
             temperature=LLM_TEMPERATURE,
             messages=[{"role": "user", "content": prompt}],
         )
-        return response.content[0].text
+        return cast(str, response.content[0].text)
 
 
 class GeminiProvider:
@@ -94,4 +97,4 @@ class GeminiProvider:
             prompt,
             generation_config={"temperature": LLM_TEMPERATURE},
         )
-        return response.text
+        return cast(str, response.text)

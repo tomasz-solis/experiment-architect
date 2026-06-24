@@ -6,8 +6,6 @@ extracted from app.py cannot regress silently.
 
 from __future__ import annotations
 
-import pytest
-
 from stats.decision_cards import (
     build_bayesian_card,
     build_count_mismatch_card,

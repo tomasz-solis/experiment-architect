@@ -25,7 +25,7 @@ def make_did_data(
     treated = (units >= n_units // 2).astype(int)
 
     rows: list[dict[str, float | int]] = []
-    for unit, is_treated in zip(units, treated):
+    for unit, is_treated in zip(units, treated, strict=True):
         for period in (0, 1, 2, 3):
             post = int(period >= 2)
             outcome = 10 + 2 * is_treated + 3 * period + true_effect * is_treated * post
