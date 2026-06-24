@@ -28,25 +28,28 @@ from config import (
 )
 
 
-def _build_post_indicator(time_values: pd.Series, intervention_point: Any) -> pd.Series:
+def _build_post_indicator(time_values: pd.Series, intervention_point: Any) -> pd.Series[Any]:
     """Build a post-period indicator that works for numeric, datetime, or label periods."""
     if is_numeric_dtype(time_values):
         numeric_times = pd.to_numeric(time_values, errors="raise")
         cutoff = pd.to_numeric(pd.Series([intervention_point]), errors="coerce").iloc[0]
         if pd.isna(cutoff):
             raise ValueError("Intervention point must be numeric for a numeric time column.")
-        return (numeric_times >= float(cutoff)).astype(int)
+        numeric_indicator: pd.Series[Any] = (numeric_times >= float(cutoff)).astype(int)
+        return numeric_indicator
 
     if is_datetime64_any_dtype(time_values):
         cutoff = pd.to_datetime(intervention_point, errors="coerce")
         if pd.isna(cutoff):
             raise ValueError("Intervention point could not be parsed as a date.")
-        return (time_values >= cutoff).astype(int)
+        datetime_indicator: pd.Series[Any] = (time_values >= cutoff).astype(int)
+        return datetime_indicator
 
     parsed_times = pd.to_datetime(time_values, errors="coerce")
     parsed_cutoff = pd.to_datetime(intervention_point, errors="coerce")
     if parsed_times.notna().all() and not pd.isna(parsed_cutoff):
-        return (parsed_times >= parsed_cutoff).astype(int)
+        parsed_indicator: pd.Series[Any] = (parsed_times >= parsed_cutoff).astype(int)
+        return parsed_indicator
 
     ordered_values = pd.Index(pd.unique(time_values))
     if intervention_point not in ordered_values:
@@ -55,7 +58,10 @@ def _build_post_indicator(time_values: pd.Series, intervention_point: Any) -> pd
         )
 
     value_to_order = {value: idx for idx, value in enumerate(ordered_values)}
-    return time_values.map(value_to_order).ge(value_to_order[intervention_point]).astype(int)
+    ordered_indicator: pd.Series[Any] = (
+        time_values.map(value_to_order).ge(value_to_order[intervention_point]).astype(int)
+    )
+    return ordered_indicator
 
 
 def _encode_time_order(time_values: pd.Series) -> pd.Series:
