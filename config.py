@@ -25,6 +25,17 @@ ALPHA = 0.05  # two-sided significance threshold
 BAYESIAN_SAMPLES = 100000
 BAYESIAN_RANDOM_SEED = 12345
 
+# Bootstrap confidence intervals
+# Percentile bootstrap for relative lift on continuous outcomes. Preferred over
+# the normal approximation when samples are small or heavily skewed (revenue,
+# session length). 5,000 resamples give a stable 95% interval without making CI
+# runtime noticeable; the seed keeps the interval reproducible across reruns.
+BOOTSTRAP_RESAMPLES = 5000
+BOOTSTRAP_RANDOM_SEED = 12345
+# Per-group size at or below which the app recommends the bootstrap interval
+# over the normal-approximation interval.
+SMALL_SAMPLE_THRESHOLD = 30
+
 # Bayesian shipping rule
 # These probability cutoffs follow the convention used in the B2C product
 # experimentation literature (Beta-Bandit, Convoy, Stitch Fix). Tighter
@@ -78,9 +89,11 @@ PAGE_ICON = "Build"
 PAGE_LAYOUT: Literal["centered", "wide"] = "wide"
 
 # LLM Models
-MODEL_OPENAI = "gpt-4o"
-MODEL_ANTHROPIC = "claude-3-5-sonnet-20241022"
-MODEL_GEMINI = "gemini-1.5-pro"
+# Update these when the provider releases a better default. The app does not
+# hardcode the version anywhere else — only here.
+MODEL_OPENAI = "gpt-4.1"
+MODEL_ANTHROPIC = "claude-sonnet-4-6"
+MODEL_GEMINI = "gemini-2.0-flash"
 
 # LLM Config
 LLM_TEMPERATURE = 0.3
