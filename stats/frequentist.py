@@ -1,12 +1,23 @@
 """Frequentist statistical helpers for experiment design and analysis."""
 
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 import numpy as np
 import pandas as pd
 from scipy.stats import chi2_contingency, ttest_ind
 
-from config import ALPHA, Z_ALPHA, Z_BETA
+from config import (
+    ALPHA,
+    BOOTSTRAP_RANDOM_SEED,
+    BOOTSTRAP_RESAMPLES,
+    Z_ALPHA,
+    Z_BETA,
+)
+
+# Pooled SD assumes equal variances (classic Cohen's d). The averaged-SD form,
+# sqrt((var_a + var_b) / 2), is the variance structure Welch's test itself uses,
+# so it is the consistent effect size when the group variances differ.
+EffectSizeMethod = Literal["pooled", "averaged"]
 
 
 class ChiSquaredResult(TypedDict):
@@ -159,14 +170,19 @@ def chi_squared_test(
 def welch_t_test(
     group_a: pd.Series,
     group_b: pd.Series,
+    effect_size_method: EffectSizeMethod = "pooled",
 ) -> WelchTTestResult:
     """Run Welch's t-test for a continuous outcome.
 
-    The test itself does not assume equal variances. The reported Cohen's d,
-    however, uses the pooled standard deviation, which is the conventional and
-    most comparable effect-size denominator. When the group variances differ
-    sharply, read the pooled-SD ``d`` as an approximation and lean on the CI of
-    the difference for the magnitude that matters.
+    The test never assumes equal variances. The effect-size denominator is
+    configurable:
+
+    - ``"pooled"`` (default): classic Cohen's d with the pooled standard
+      deviation. The most comparable to published benchmarks, but it assumes
+      roughly equal variances.
+    - ``"averaged"``: Cohen's d using ``sqrt((var_a + var_b) / 2)``. This is the
+      variance structure Welch's test itself uses, so it is the consistent
+      choice when the group variances differ sharply.
     """
     if len(group_a) < 2 or len(group_b) < 2:
         raise ValueError("Each group must have at least 2 observations for Welch's t-test.")
@@ -177,21 +193,28 @@ def welch_t_test(
 
     n_a = len(group_a)
     n_b = len(group_b)
-    pooled_std = np.sqrt(
-        ((n_a - 1) * group_a.std() ** 2 + (n_b - 1) * group_b.std() ** 2)
-        / (n_a + n_b - 2)
-    )
+    var_a = float(group_a.std() ** 2)
+    var_b = float(group_b.std() ** 2)
 
-    if pooled_std == 0:
+    if effect_size_method == "averaged":
+        denominator = np.sqrt((var_a + var_b) / 2)
+        effect_size_label = "Cohen's d (unequal var)"
+    else:
+        denominator = np.sqrt(
+            ((n_a - 1) * var_a + (n_b - 1) * var_b) / (n_a + n_b - 2)
+        )
+        effect_size_label = "Cohen's d"
+
+    if denominator == 0:
         raise ValueError("Effect size is undefined when both groups have zero variance.")
 
-    cohens_d = (group_b.mean() - group_a.mean()) / pooled_std
+    cohens_d = (group_b.mean() - group_a.mean()) / denominator
 
     return {
         "statistic": float(statistic),
         "p_value": float(p_value),
         "effect_size": float(cohens_d),
-        "effect_size_label": "Cohen's d",
+        "effect_size_label": effect_size_label,
         "test_name": "Welch's T-Test",
     }
 
@@ -250,6 +273,50 @@ def confidence_interval_continuous(
     ci_lower = ((mean_b - margin) - mean_a) / mean_a
     ci_upper = ((mean_b + margin) - mean_a) / mean_a
     return ci_lower, ci_upper
+
+
+def bootstrap_ci_relative_lift_continuous(
+    group_a: pd.Series,
+    group_b: pd.Series,
+    alpha: float = ALPHA,
+    n_resamples: int = BOOTSTRAP_RESAMPLES,
+    seed: int = BOOTSTRAP_RANDOM_SEED,
+) -> tuple[float, float]:
+    """Percentile bootstrap CI on relative lift for continuous outcomes.
+
+    Resamples each group with replacement and reads the empirical percentiles of
+    the relative lift. Unlike :func:`confidence_interval_continuous`, it assumes
+    neither normality nor a fixed denominator, so it is the more honest interval
+    for small or heavily skewed samples (revenue, session length). The seed makes
+    the interval reproducible across reruns.
+    """
+    if len(group_a) < 2 or len(group_b) < 2:
+        raise ValueError("Each group must have at least 2 observations to bootstrap a CI.")
+    if group_a.isna().any() or group_b.isna().any():
+        raise ValueError("Continuous outcome groups cannot contain missing values.")
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be between 0 and 1.")
+    if n_resamples < 1:
+        raise ValueError("n_resamples must be at least 1.")
+    if group_a.mean() == 0:
+        raise ValueError("Control mean must be non-zero to calculate relative lift.")
+
+    rng = np.random.default_rng(seed)
+    a = group_a.to_numpy(dtype=float)
+    b = group_b.to_numpy(dtype=float)
+
+    means_a = a[rng.integers(0, len(a), size=(n_resamples, len(a)))].mean(axis=1)
+    means_b = b[rng.integers(0, len(b), size=(n_resamples, len(b)))].mean(axis=1)
+
+    # Drop resamples where the control mean is zero (relative lift undefined).
+    valid = means_a != 0
+    if not valid.any():
+        raise ValueError("Every bootstrap resample produced a zero control mean.")
+    lifts = (means_b[valid] - means_a[valid]) / means_a[valid]
+
+    lower = float(np.percentile(lifts, 100 * alpha / 2))
+    upper = float(np.percentile(lifts, 100 * (1 - alpha / 2)))
+    return lower, upper
 
 
 def is_significant(p_value: float, alpha: float = ALPHA) -> bool:

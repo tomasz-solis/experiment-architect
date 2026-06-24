@@ -6,6 +6,7 @@ import pytest
 
 from stats.frequentist import (
     bonferroni_adjusted_alpha,
+    bootstrap_ci_relative_lift_continuous,
     build_frequentist_guardrails,
     calculate_lift,
     calculate_reverse_mde,
@@ -92,6 +93,33 @@ class TestWelchTTest:
         assert result["p_value"] > 0.9
         assert abs(result["effect_size"]) < 0.01
 
+    def test_averaged_effect_size_is_labelled_and_differs_under_unequal_var_and_n(self) -> None:
+        rng = np.random.default_rng(0)
+        # Pooled SD weights by (n-1), the averaged form weights equally, so they
+        # diverge only when BOTH the variances and the sample sizes differ.
+        group_a = pd.Series(rng.normal(10.0, 1.0, 200))
+        group_b = pd.Series(rng.normal(11.0, 5.0, 600))
+
+        pooled = welch_t_test(group_a, group_b)
+        averaged = welch_t_test(group_a, group_b, effect_size_method="averaged")
+
+        assert pooled["effect_size_label"] == "Cohen's d"
+        assert averaged["effect_size_label"] == "Cohen's d (unequal var)"
+        # The p-value is identical (same Welch test); only the effect size changes.
+        assert averaged["p_value"] == pytest.approx(pooled["p_value"])
+        assert averaged["effect_size"] != pytest.approx(pooled["effect_size"])
+
+    def test_effect_size_methods_agree_under_equal_variance(self) -> None:
+        rng = np.random.default_rng(1)
+        # Equal variances => pooled and averaged denominators coincide exactly,
+        # even with unequal group sizes.
+        group_a = pd.Series(rng.normal(10.0, 2.0, 300))
+        group_b = pd.Series(rng.normal(11.0, 2.0, 900))
+
+        pooled = welch_t_test(group_a, group_b)["effect_size"]
+        averaged = welch_t_test(group_a, group_b, effect_size_method="averaged")["effect_size"]
+        assert averaged == pytest.approx(pooled, rel=0.05)
+
 
 class TestConfidenceIntervals:
     """Tests for confidence interval calculations."""
@@ -110,6 +138,38 @@ class TestConfidenceIntervals:
         assert ci_lower < 0.15
         assert ci_upper > 0.05
         assert ci_lower < ci_upper
+
+
+class TestBootstrapCI:
+    """Tests for the percentile bootstrap CI on relative lift."""
+
+    def test_brackets_the_true_lift(self) -> None:
+        rng = np.random.default_rng(42)
+        group_a = pd.Series(rng.normal(10.0, 2.0, 800))
+        group_b = pd.Series(rng.normal(11.0, 2.0, 800))  # ~10% true lift
+        lower, upper = bootstrap_ci_relative_lift_continuous(group_a, group_b)
+        assert lower < 0.10 < upper
+        assert lower < upper
+
+    def test_is_reproducible_under_fixed_seed(self) -> None:
+        rng = np.random.default_rng(7)
+        group_a = pd.Series(rng.normal(5.0, 1.0, 40))
+        group_b = pd.Series(rng.normal(5.5, 1.0, 40))
+        first = bootstrap_ci_relative_lift_continuous(group_a, group_b)
+        second = bootstrap_ci_relative_lift_continuous(group_a, group_b)
+        assert first == second
+
+    def test_rejects_zero_control_mean(self) -> None:
+        group_a = pd.Series([-1.0, 1.0, -2.0, 2.0])  # mean exactly 0
+        group_b = pd.Series([1.0, 2.0, 3.0, 4.0])
+        with pytest.raises(ValueError, match="non-zero"):
+            bootstrap_ci_relative_lift_continuous(group_a, group_b)
+
+    def test_rejects_missing_values(self) -> None:
+        group_a = pd.Series([1.0, 2.0, np.nan])
+        group_b = pd.Series([1.0, 2.0, 3.0])
+        with pytest.raises(ValueError, match="missing values"):
+            bootstrap_ci_relative_lift_continuous(group_a, group_b)
 
 
 class TestSignificance:
