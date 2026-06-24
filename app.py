@@ -52,7 +52,6 @@ from ui.components import (
     render_summary_cards,
     show_bayesian_decision,
     show_bayesian_results,
-    show_data_preview,
     show_data_quality,
     show_frequentist_results,
     show_srm_warning,
@@ -539,7 +538,7 @@ def render_csv_section() -> None:
     if uploaded_file is not None:
         df = pd.read_csv(uploaded_file)
         show_data_quality(df)
-        show_data_preview(df)
+        st.write("Preview:", df.head(3))
 
         if st.button("Run the dataframe audit", key="csv_analysis_button"):
             mapping = ask_agent_json(
@@ -777,7 +776,7 @@ def _render_did_analysis() -> None:
 
     df_did = pd.read_csv(did_file)
     show_data_quality(df_did)
-    show_data_preview(df_did)
+    st.write("Preview:", df_did.head(3))
 
     if not st.button("Run DiD analysis", key="did_analyze"):
         return
@@ -894,7 +893,7 @@ def _render_rdd_analysis() -> None:
 
     df_rdd = pd.read_csv(rdd_file)
     show_data_quality(df_rdd)
-    show_data_preview(df_rdd)
+    st.write("Preview:", df_rdd.head(3))
 
     if not st.button("Run RDD analysis", key="rdd_analyze"):
         return

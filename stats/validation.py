@@ -7,32 +7,12 @@ from typing import Any
 
 import pandas as pd
 
-MAPPING_SCHEMA_VERSION = "1.0"
-
-
-def validate_mapping_schema_version(mapping: dict[str, Any]) -> None:
-    """Check the mapping declares a supported schema version, if one is declared.
-
-    Mappings without a ``_schema_version`` key pass through untouched for
-    backward compatibility. Once a version is declared, it must match the
-    current version, so future contract changes fail loudly rather than
-    silently dropping fields.
-    """
-    declared = mapping.get("_schema_version")
-    if declared is not None and declared != MAPPING_SCHEMA_VERSION:
-        raise ValueError(
-            f"LLM mapping schema version '{declared}' is not supported. "
-            f"Expected '{MAPPING_SCHEMA_VERSION}'."
-        )
-
-
 def validate_mapping_columns(
     mapping: dict[str, Any],
     df: pd.DataFrame,
     column_keys: Iterable[str],
 ) -> dict[str, str]:
     """Return a cleaned mapping after checking that all mapped columns exist."""
-    validate_mapping_schema_version(mapping)
 
     validated: dict[str, str] = {}
     missing_keys = [key for key in column_keys if key not in mapping]

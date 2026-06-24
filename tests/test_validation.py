@@ -6,13 +6,11 @@ import pandas as pd
 import pytest
 
 from stats.validation import (
-    MAPPING_SCHEMA_VERSION,
     normalize_metric_type,
     prepare_ab_test_frame,
     prepare_did_frame,
     prepare_rdd_frame,
     validate_mapping_columns,
-    validate_mapping_schema_version,
 )
 
 
@@ -79,20 +77,6 @@ class TestValidateMappingColumns:
             ["variant_col", "metric_col"],
         )
         assert result == {"variant_col": "variant", "metric_col": "metric"}
-
-
-class TestSchemaVersion:
-    """Coverage for the schema-version contract."""
-
-    def test_accepts_missing_version_for_backward_compatibility(self) -> None:
-        validate_mapping_schema_version({"variant_col": "x"})
-
-    def test_accepts_matching_version(self) -> None:
-        validate_mapping_schema_version({"_schema_version": MAPPING_SCHEMA_VERSION})
-
-    def test_rejects_mismatched_version(self) -> None:
-        with pytest.raises(ValueError, match="not supported"):
-            validate_mapping_schema_version({"_schema_version": "99.0"})
 
 
 class TestPrepareAbTestFrame:
