@@ -20,6 +20,7 @@ experiment-architect/
 │   ├── sanity.py
 │   └── validation.py
 ├── tests/
+│   ├── test_app_smoke.py
 │   ├── test_bayesian.py
 │   ├── test_calibration.py
 │   ├── test_causal.py
@@ -28,11 +29,14 @@ experiment-architect/
 │   ├── test_frequentist.py
 │   ├── test_llm_client.py
 │   ├── test_plots.py
+│   ├── test_providers.py
 │   ├── test_sanity.py
 │   └── test_validation.py
 ├── ui/
 │   ├── components.py
-│   └── formatting.py
+│   ├── formatting.py
+│   ├── snapshots.py
+│   └── state.py
 ├── pyproject.toml
 ├── requirements.txt
 └── requirements-dev.txt
@@ -89,13 +93,15 @@ Contains:
 
 - chi-squared test for binary outcomes
 - Welch's t-test for continuous outcomes
-- confidence intervals on relative lift
+- confidence intervals on relative lift (normal approximation and percentile bootstrap)
 - sample ratio mismatch check
 - Bonferroni-adjusted alpha helper for multiple primary metrics
 - peeking and multiple-comparison guardrail summary
 - sample size and reverse-MDE calculations
 
 The reverse-MDE helper uses the same split-factor logic as the sample-size helper, so the two calculations stay aligned.
+
+For continuous outcomes, Welch's t-test exposes two effect sizes: pooled-SD Cohen's d (the default) and an `"averaged"` form using `sqrt((var_a + var_b) / 2)`, which is the variance structure Welch itself uses and the consistent choice under unequal variances. When a group has 30 or fewer observations, the app switches to that effect size and a percentile bootstrap CI (`bootstrap_ci_relative_lift_continuous`), which avoids the normal approximation that gets brittle on small or skewed samples.
 
 ### `stats/bayesian.py`
 
@@ -162,6 +168,10 @@ This is a thin layer on purpose. It is meant to reduce operational noise, not be
 `ui/components.py` keeps Streamlit rendering code out of `app.py`. These helpers are intentionally small and do not own statistical decisions.
 
 `ui/formatting.py` holds the *pure* presentation helpers (`first_sentence`, `duration_tone`, `build_card`, `sidebar_tip`). They contain no Streamlit calls, so unlike `app.py` — which executes Streamlit at import time — they can be imported and unit tested directly (`tests/test_formatting.py`).
+
+`ui/state.py` centralizes the Streamlit session-state widget keys as constants plus the `read_uploaded_dataframe` reader. Before this, a key like `"main_base"` was a literal in both the widget definition and the snapshot builder, so a rename could silently desync them.
+
+`ui/snapshots.py` owns the four review lenses. Each builder (`design_snapshot`, `manual_snapshot`, `csv_snapshot`, `causal_snapshot`) reads the relevant session state and returns the hero/summary content for one lens; `build_page_snapshot` dispatches on the selected lens. Pulling these out of `app.py` keeps the app script a thin orchestrator and keeps each lens cohesive. They are exercised end-to-end by `tests/test_app_smoke.py`, which runs the real Streamlit script through `AppTest`.
 
 ## Type contracts
 

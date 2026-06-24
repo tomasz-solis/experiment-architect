@@ -11,6 +11,7 @@ __pycache__/
 venv/
 env/
 ENV/
+.venv/
 
 # Environment variables
 .env
@@ -30,10 +31,15 @@ Thumbs.db
 # Logs
 *.log
 
-# Data files (if you add any)
+# Data files
 data/
-*.csv
 *.xlsx
+
+# Allow committed example data
+examples/
+
+# Claude Code local settings (not for version control)
+.claude/
 
 # Jupyter
 .ipynb_checkpoints/
