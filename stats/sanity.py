@@ -8,12 +8,19 @@ These replace an LLM-based sanity check. Rules are reproducible,
 testable, and don't ask the model to make statistical judgments.
 """
 
-from typing import List, Literal, Tuple
+from typing import Literal
 
 from stats.frequentist import calculate_sample_size
 
 Status = Literal["ok", "caution", "fail"]
-CheckResult = Tuple[str, Status, str]
+CheckResult = tuple[str, Status, str]
+
+_SEVERITY_RANK: dict[Status, int] = {"ok": 0, "caution": 1, "fail": 2}
+
+
+def severity_rank(status: Status) -> int:
+    """Map a check status to an ordered severity rank (higher is worse)."""
+    return _SEVERITY_RANK[status]
 
 
 def check_traffic_vs_mde(
@@ -118,7 +125,7 @@ def run_all_checks(
     mde: float,
     daily_traffic: int,
     weeks: int,
-) -> List[CheckResult]:
+) -> list[CheckResult]:
     """Run all sanity checks and return their results in order."""
     return [
         check_traffic_vs_mde(baseline, mde, daily_traffic, weeks),

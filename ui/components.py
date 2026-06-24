@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from html import escape
-from typing import Any
 
 import pandas as pd
 import streamlit as st
 
 from config import ALPHA
+from stats.bayesian import BayesianAnalysisResult
+from stats.frequentist import FrequentistTestResult
+from ui.formatting import SummaryCard
 
 
 def inject_app_styles() -> None:
@@ -24,6 +26,13 @@ def inject_app_styles() -> None:
                 --mint: #1ecf9b;
                 --amber: #d18a1f;
                 --red: #dd5b52;
+                /* Darker tone variants for value text on light cards. The bright
+                   tones above stay for decoration (gradients, chips, accents);
+                   these meet WCAG AA contrast against the light --card-bg. */
+                --blue-text: #3a56e0;
+                --mint-text: #0a7d5c;
+                --amber-text: #9a6a12;
+                --red-text: #c43d33;
                 --sidebar-top: #0d1320;
                 --sidebar-bottom: #101925;
                 --card-border: rgba(112, 128, 156, 0.16);
@@ -86,6 +95,11 @@ def inject_app_styles() -> None:
                 border: 1px solid rgba(255, 255, 255, 0.12);
             }
 
+            section[data-testid="stSidebar"] .stButton > button:hover {
+                color: #ffffff;
+                border-color: rgba(255, 255, 255, 0.28);
+            }
+
             .stButton > button {
                 border-radius: 999px;
                 border: 1px solid rgba(79, 109, 255, 0.18);
@@ -98,7 +112,7 @@ def inject_app_styles() -> None:
 
             .stButton > button:hover {
                 border-color: rgba(79, 109, 255, 0.34);
-                color: var(--blue);
+                color: var(--blue-text);
             }
 
             [data-baseweb="select"] > div,
@@ -136,6 +150,10 @@ def inject_app_styles() -> None:
                 text-transform: uppercase;
                 letter-spacing: 0.12em;
                 color: var(--muted);
+            }
+
+            div[data-testid="stMetricValue"] {
+                color: var(--ink);
             }
 
             div[data-testid="stExpander"] {
@@ -348,19 +366,19 @@ def inject_app_styles() -> None:
             }
 
             .tone-blue {
-                color: var(--blue);
+                color: var(--blue-text);
             }
 
             .tone-mint {
-                color: var(--mint);
+                color: var(--mint-text);
             }
 
             .tone-amber {
-                color: var(--amber);
+                color: var(--amber-text);
             }
 
             .tone-red {
-                color: var(--red);
+                color: var(--red-text);
             }
 
             .signal-header {
@@ -457,7 +475,7 @@ def render_hero_card(
     )
 
 
-def render_summary_cards(cards: list[dict[str, str | bool]]) -> None:
+def render_summary_cards(cards: list[SummaryCard]) -> None:
     """Render the short summary card row below the hero."""
     card_markup: list[str] = []
     for index, card in enumerate(cards):
@@ -541,7 +559,7 @@ def show_srm_warning(ratio: float, threshold: float = 0.05) -> None:
 
 
 def show_frequentist_results(
-    test_results: dict[str, Any],
+    test_results: FrequentistTestResult,
     ci_lower: float,
     ci_upper: float,
     mean_a: float,
@@ -566,14 +584,15 @@ def show_frequentist_results(
     if alpha_threshold != ALPHA:
         st.caption(f"Decision threshold after correction: alpha={alpha_threshold:.4f}")
 
-    if "chi_square_valid" in test_results and not test_results["chi_square_valid"]:
+    # Only the chi-squared result carries a validity flag; Welch results omit it.
+    if dict(test_results).get("chi_square_valid") is False:
         st.warning(
             "At least one expected cell count is below 5. The chi-squared approximation may be unreliable."
         )
 
 
 def show_bayesian_results(
-    bayes_results: dict[str, float],
+    bayes_results: BayesianAnalysisResult,
     groups: list[str],
 ) -> None:
     """Render the core Bayesian metrics for a two-group experiment."""

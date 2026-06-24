@@ -1,6 +1,6 @@
 """Bayesian statistical helpers for binary experiment outcomes."""
 
-from typing import Tuple
+from typing import TypedDict
 
 import numpy as np
 from scipy.stats import beta as beta_dist
@@ -8,12 +8,24 @@ from scipy.stats import beta as beta_dist
 from config import (
     BAYESIAN_CONSIDER_THRESHOLD,
     BAYESIAN_KEEP_CONTROL_THRESHOLD,
+    BAYESIAN_RANDOM_SEED,
     BAYESIAN_SAMPLES,
     BAYESIAN_SHIP_THRESHOLD,
     DEFAULT_LOSS_TOLERANCE_ABSOLUTE,
     DEFAULT_LOSS_TOLERANCE_RELATIVE,
 )
 from stats.frequentist import _validate_binary_inputs
+
+
+class BayesianAnalysisResult(TypedDict):
+    """Posterior summary for a two-variant Beta-Binomial comparison."""
+
+    prob_b_wins: float
+    expected_loss: float
+    alpha_a: float
+    beta_a: float
+    alpha_b: float
+    beta_b: float
 
 
 def beta_binomial_analysis(
@@ -23,8 +35,14 @@ def beta_binomial_analysis(
     failures_b: int,
     alpha_prior: float = 1.0,
     beta_prior: float = 1.0,
-) -> dict[str, float]:
-    """Estimate posterior win probability and expected loss for two variants."""
+    random_seed: int | None = BAYESIAN_RANDOM_SEED,
+) -> BayesianAnalysisResult:
+    """Estimate posterior win probability and expected loss for two variants.
+
+    ``random_seed`` makes the Monte Carlo estimate reproducible so the same
+    input counts always produce the same recommendation. Pass ``None`` for a
+    fresh draw each call.
+    """
     _validate_binary_inputs(successes_a, failures_a, successes_b, failures_b)
 
     if alpha_prior <= 0 or beta_prior <= 0:
@@ -35,8 +53,9 @@ def beta_binomial_analysis(
     alpha_b = alpha_prior + successes_b
     beta_b = beta_prior + failures_b
 
-    samples_a = beta_dist.rvs(alpha_a, beta_a, size=BAYESIAN_SAMPLES)
-    samples_b = beta_dist.rvs(alpha_b, beta_b, size=BAYESIAN_SAMPLES)
+    rng = np.random.default_rng(random_seed)
+    samples_a = beta_dist.rvs(alpha_a, beta_a, size=BAYESIAN_SAMPLES, random_state=rng)
+    samples_b = beta_dist.rvs(alpha_b, beta_b, size=BAYESIAN_SAMPLES, random_state=rng)
 
     prob_b_wins = float((samples_b > samples_a).mean())
     loss_if_ship_b = float(np.maximum(samples_a - samples_b, 0).mean())
@@ -79,7 +98,7 @@ def get_decision_recommendation(
     expected_loss: float = 0.0,
     loss_tolerance: float | None = None,
     baseline_for_relative_tolerance: float | None = None,
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """Translate posterior metrics into a shipping recommendation.
 
     A high win probability is not enough on its own. When expected loss

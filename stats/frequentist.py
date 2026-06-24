@@ -1,12 +1,63 @@
 """Frequentist statistical helpers for experiment design and analysis."""
 
-from typing import Any, Tuple
+from typing import TypedDict
 
 import numpy as np
 import pandas as pd
 from scipy.stats import chi2_contingency, ttest_ind
 
 from config import ALPHA, Z_ALPHA, Z_BETA
+
+
+class ChiSquaredResult(TypedDict):
+    """Result of a chi-squared test for a binary outcome."""
+
+    statistic: float
+    p_value: float
+    effect_size: float
+    effect_size_label: str
+    test_name: str
+    min_expected_count: float
+    chi_square_valid: bool
+
+
+class WelchTTestResult(TypedDict):
+    """Result of Welch's t-test for a continuous outcome."""
+
+    statistic: float
+    p_value: float
+    effect_size: float
+    effect_size_label: str
+    test_name: str
+
+
+# A frequentist significance read is either the binary (chi-squared) or the
+# continuous (Welch) result. Both share the keys the UI renders unconditionally.
+FrequentistTestResult = ChiSquaredResult | WelchTTestResult
+
+
+class SampleSizeResult(TypedDict):
+    """Sample-size and duration estimate for a two-group A/B test."""
+
+    n_total: int
+    days: int
+    split_penalty: int
+
+
+class FrequentistGuardrails(TypedDict):
+    """Guardrail summary that affects how a p-value should be interpreted."""
+
+    n_comparisons: int
+    adjusted_alpha: float
+    alpha_adjusted: bool
+    peeked_early: bool
+
+
+class ReverseMDEResult(TypedDict, total=False):
+    """Reverse-MDE estimate. Carries ``mde`` on success or ``error`` on failure."""
+
+    mde: float
+    error: str
 
 
 def _validate_binary_inputs(
@@ -26,7 +77,7 @@ def _validate_binary_inputs(
             raise ValueError(f"Group {label}: total sample size is zero.")
 
 
-def check_srm(n_a: int, n_b: int, threshold: float = 0.05) -> Tuple[bool, float]:
+def check_srm(n_a: int, n_b: int, threshold: float = 0.05) -> tuple[bool, float]:
     """Check whether the observed split deviates too far from 50/50."""
     if n_a < 0 or n_b < 0:
         raise ValueError("Sample sizes cannot be negative.")
@@ -58,7 +109,7 @@ def build_frequentist_guardrails(
     n_comparisons: int = 1,
     peeked_early: bool = False,
     alpha: float = ALPHA,
-) -> dict[str, int | float | bool]:
+) -> FrequentistGuardrails:
     """Summarize the main guardrails that affect p-value interpretation.
 
     The Bonferroni adjustment is a conservative default when several primary
@@ -80,7 +131,7 @@ def chi_squared_test(
     failures_a: int,
     successes_b: int,
     failures_b: int,
-) -> dict[str, float | str | bool]:
+) -> ChiSquaredResult:
     """Run a chi-squared test for a binary outcome."""
     _validate_binary_inputs(successes_a, failures_a, successes_b, failures_b)
 
@@ -108,8 +159,15 @@ def chi_squared_test(
 def welch_t_test(
     group_a: pd.Series,
     group_b: pd.Series,
-) -> dict[str, float | str]:
-    """Run Welch's t-test for a continuous outcome."""
+) -> WelchTTestResult:
+    """Run Welch's t-test for a continuous outcome.
+
+    The test itself does not assume equal variances. The reported Cohen's d,
+    however, uses the pooled standard deviation, which is the conventional and
+    most comparable effect-size denominator. When the group variances differ
+    sharply, read the pooled-SD ``d`` as an approximation and lean on the CI of
+    the difference for the magnitude that matters.
+    """
     if len(group_a) < 2 or len(group_b) < 2:
         raise ValueError("Each group must have at least 2 observations for Welch's t-test.")
     if group_a.isna().any() or group_b.isna().any():
@@ -143,8 +201,15 @@ def confidence_interval_binary(
     cr_b: float,
     n_a: int,
     n_b: int,
-) -> Tuple[float, float]:
-    """Calculate a confidence interval on relative lift for binary outcomes."""
+) -> tuple[float, float]:
+    """Calculate a confidence interval on relative lift for binary outcomes.
+
+    Uses a first-order delta-method approximation: the interval is built on the
+    absolute difference and then divided by the control rate, treating the
+    denominator as fixed. That is accurate when the control rate is estimated
+    far more precisely than the lift, which holds for the usual A/B sample
+    sizes. For very small control groups, prefer a bootstrap interval.
+    """
     if n_a <= 0 or n_b <= 0:
         raise ValueError("Sample sizes must be positive.")
     if cr_a <= 0:
@@ -165,7 +230,7 @@ def confidence_interval_binary(
 def confidence_interval_continuous(
     group_a: pd.Series,
     group_b: pd.Series,
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """Calculate a confidence interval on relative lift for continuous outcomes."""
     if len(group_a) < 2 or len(group_b) < 2:
         raise ValueError("Each group must have at least 2 observations to build a confidence interval.")
@@ -201,7 +266,7 @@ def calculate_sample_size(
     mde: float,
     daily_traffic: int,
     split_ratio: float = 0.5,
-) -> dict[str, int]:
+) -> SampleSizeResult:
     """Estimate total sample size and duration for an A/B test.
 
     This formula is paired with :func:`calculate_reverse_mde`, which is its
@@ -229,7 +294,7 @@ def calculate_sample_size(
 
     split_penalty = 0
     if split_ratio != 0.5:
-        split_penalty = int((((split_factor / 4) - 1) * 100))
+        split_penalty = int(((split_factor / 4) - 1) * 100)
 
     return {
         "n_total": int(np.ceil(n_total)),
@@ -243,7 +308,7 @@ def calculate_reverse_mde(
     daily_visitors: int,
     weeks: int,
     split_ratio: float = 0.5,
-) -> dict[str, Any]:
+) -> ReverseMDEResult:
     """Estimate the smallest relative lift detectable within a time window.
 
     The calculation uses the same variance setup as ``calculate_sample_size``
