@@ -28,7 +28,7 @@ class DummyClient:
 @pytest.fixture
 def patch_streamlit(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
     """Patch Streamlit messaging helpers so tests can inspect them."""
-    calls = {"warnings": [], "errors": []}
+    calls: dict[str, list[str]] = {"warnings": [], "errors": []}
 
     monkeypatch.setattr(st, "spinner", lambda message: nullcontext())
     monkeypatch.setattr(st, "warning", lambda message: calls["warnings"].append(message))

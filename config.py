@@ -5,6 +5,8 @@ convention or citation that justifies the chosen value. Override per-call
 when the stakes warrant tighter or looser thresholds.
 """
 
+from typing import Literal
+
 # Statistical convention
 # Z_ALPHA is the two-sided 95% critical value used in the sample-size and
 # confidence-interval formulas. ALPHA is the matching two-sided significance
@@ -15,7 +17,13 @@ Z_BETA = 0.84  # 80% power, equivalent to norm.ppf(0.80)
 ALPHA = 0.05  # two-sided significance threshold
 
 # Bayesian sampling
+# The posterior win probability and expected loss are estimated by Monte Carlo.
+# At 100k draws the standard error on a probability near 0.5 is
+# sqrt(0.25 / 100_000) ~= 0.0016, which is well inside the decision thresholds
+# below. The seed makes the recommendation reproducible: the same input counts
+# always yield the same ship/hold call, which matters for a decision tool.
 BAYESIAN_SAMPLES = 100000
+BAYESIAN_RANDOM_SEED = 12345
 
 # Bayesian shipping rule
 # These probability cutoffs follow the convention used in the B2C product
@@ -67,7 +75,7 @@ RDD_MIN_SIDE_OBSERVATIONS = 30
 # Streamlit config
 PAGE_TITLE = "Test Architect"
 PAGE_ICON = "Build"
-PAGE_LAYOUT = "wide"
+PAGE_LAYOUT: Literal["centered", "wide"] = "wide"
 
 # LLM Models
 MODEL_OPENAI = "gpt-4o"

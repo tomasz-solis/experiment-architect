@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from io import BytesIO
 import logging
-from typing import Any, Sequence
+from collections.abc import Sequence
+from io import BytesIO
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -25,6 +26,8 @@ from stats.decision_cards import (
     build_weakest_signal_card,
 )
 from stats.frequentist import (
+    FrequentistGuardrails,
+    FrequentistTestResult,
     build_frequentist_guardrails,
     calculate_lift,
     calculate_reverse_mde,
@@ -36,7 +39,7 @@ from stats.frequentist import (
     welch_t_test,
 )
 from stats.plots import plot_power_curve
-from stats.sanity import run_all_checks
+from stats.sanity import run_all_checks, severity_rank
 from stats.validation import (
     normalize_metric_type,
     prepare_ab_test_frame,
@@ -60,6 +63,7 @@ from ui.components import (
     show_frequentist_results,
     show_srm_warning,
 )
+from ui.formatting import build_card, duration_tone, first_sentence, sidebar_tip
 
 logger = logging.getLogger(__name__)
 
@@ -210,43 +214,18 @@ def render_frequentist_guardrail_controls(key_prefix: str) -> tuple[int, bool]:
     return n_comparisons, peeked_early
 
 
-def show_frequentist_guardrails(guardrails: dict[str, int | float | bool]) -> None:
+def show_frequentist_guardrails(guardrails: FrequentistGuardrails) -> None:
     """Render adjusted-alpha and peeking warnings for frequentist analyses."""
-    if bool(guardrails["alpha_adjusted"]):
+    if guardrails["alpha_adjusted"]:
         st.info(
-            f"Using a Bonferroni-adjusted alpha of {float(guardrails['adjusted_alpha']):.4f} "
-            f"across {int(guardrails['n_comparisons'])} primary metrics."
+            f"Using a Bonferroni-adjusted alpha of {guardrails['adjusted_alpha']:.4f} "
+            f"across {guardrails['n_comparisons']} primary metrics."
         )
-    if bool(guardrails["peeked_early"]):
+    if guardrails["peeked_early"]:
         st.warning(
             "You marked this analysis as peeked early. Treat the p-value as optimistic "
             "unless the experiment used a sequential-testing plan."
         )
-
-
-def severity_rank(status: str) -> int:
-    """Map status text to an ordered severity rank."""
-    return {"ok": 0, "caution": 1, "fail": 2}.get(status, 0)
-
-
-def first_sentence(text: str) -> str:
-    """Return the first sentence-like fragment of a string for compact card copy."""
-    stripped = text.strip()
-    if not stripped:
-        return ""
-    for delimiter in (". ", "; ", " - "):
-        if delimiter in stripped:
-            return stripped.split(delimiter, 1)[0].strip() + ("" if delimiter == " - " else ".")
-    return stripped
-
-
-def duration_tone(days: int) -> str:
-    """Return a color tone for experiment duration."""
-    if days <= 28:
-        return "mint"
-    if days <= 56:
-        return "amber"
-    return "red"
 
 
 def read_uploaded_dataframe(widget_key: str) -> pd.DataFrame | None:
@@ -259,34 +238,6 @@ def read_uploaded_dataframe(widget_key: str) -> pd.DataFrame | None:
         return pd.read_csv(BytesIO(uploaded_file.getvalue()))
     except Exception:
         return None
-
-
-def sidebar_tip(review_focus: str) -> str:
-    """Return a concise sidebar tip based on the selected review lens."""
-    tips = {
-        "Experiment design": "Size the claim before you size the excitement.",
-        "Manual result read": "A winner with a weak stop rule is not a winner yet.",
-        "Raw CSV audit": "Mapped columns are still assumptions until you inspect the frame.",
-        "Causal fallback": "When randomization fails, the assumption becomes the product.",
-    }
-    return tips[review_focus]
-
-
-def build_card(
-    label: str,
-    value: str,
-    meta: str,
-    tone: str,
-    anchor: bool = False,
-) -> dict[str, str | bool]:
-    """Create a summary-card payload for the hero row."""
-    return {
-        "label": label,
-        "value": value,
-        "meta": meta,
-        "tone": tone,
-        "anchor": anchor,
-    }
 
 
 def design_snapshot() -> dict[str, Any]:
@@ -804,7 +755,7 @@ if st.button("Read the result", key="manual_result_button"):
                 cr_a,
                 cr_b,
                 ["Control", "Variant B"],
-                alpha_threshold=float(guardrails["adjusted_alpha"]),
+                alpha_threshold=guardrails["adjusted_alpha"],
             )
 
         if manual_method in ["Bayesian (Probability)", "Both"]:
@@ -921,6 +872,7 @@ if uploaded_file is not None:
                 lift = calculate_lift(float(mean_a), float(mean_b))
                 st.metric(f"Lift ({groups[1]} vs {groups[0]})", f"{lift:.2%}")
 
+                test_results: FrequentistTestResult
                 if metric_type == "binary":
                     successes_a = int(group_a.sum())
                     successes_b = int(group_b.sum())
@@ -959,7 +911,7 @@ if uploaded_file is not None:
                         float(mean_a),
                         float(mean_b),
                         [str(groups[0]), str(groups[1])],
-                        alpha_threshold=float(guardrails["adjusted_alpha"]),
+                        alpha_threshold=guardrails["adjusted_alpha"],
                     )
 
                 if csv_method in ["Bayesian (Probability)", "Both"]:

@@ -21,16 +21,18 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install lint tools
+      - name: Install lint tools and runtime deps
+        # Full runtime deps so mypy type-checks against real library stubs
+        # (numpy, pandas, scipy, plotly) instead of falling back to Any.
         run: |
           python -m pip install --upgrade pip
-          pip install ruff mypy pandas-stubs
+          pip install -r requirements-dev.txt
 
       - name: Ruff check
         run: ruff check .
 
-      - name: Mypy strict on library code
-        run: mypy --strict stats/ llm/ config.py
+      - name: Mypy strict (whole repo)
+        run: mypy .
 
   pytest:
     runs-on: ubuntu-latest

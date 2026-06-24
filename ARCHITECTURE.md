@@ -14,18 +14,25 @@ experiment-architect/
 ├── stats/
 │   ├── bayesian.py
 │   ├── causal.py
+│   ├── decision_cards.py
 │   ├── frequentist.py
 │   ├── plots.py
 │   ├── sanity.py
 │   └── validation.py
 ├── tests/
 │   ├── test_bayesian.py
+│   ├── test_calibration.py
 │   ├── test_causal.py
+│   ├── test_decision_cards.py
+│   ├── test_formatting.py
 │   ├── test_frequentist.py
 │   ├── test_llm_client.py
+│   ├── test_plots.py
+│   ├── test_sanity.py
 │   └── test_validation.py
 ├── ui/
-│   └── components.py
+│   ├── components.py
+│   └── formatting.py
 ├── pyproject.toml
 ├── requirements.txt
 └── requirements-dev.txt
@@ -100,6 +107,8 @@ Implements a Beta-Binomial model for binary metrics. It returns:
 
 The decision helper is intentionally loss-aware. High win probability is not enough when the downside remains large.
 
+The posterior win probability and expected loss are estimated by seeded Monte Carlo (`BAYESIAN_RANDOM_SEED`), so the same input counts always yield the same ship/hold recommendation. That reproducibility matters for a decision tool: two analysts looking at the same data should not see different calls because of sampling noise.
+
 ### `stats/causal.py`
 
 Implements:
@@ -150,7 +159,13 @@ This is a thin layer on purpose. It is meant to reduce operational noise, not be
 
 ## UI layer
 
-`ui/components.py` keeps rendering code out of `app.py`. These helpers are intentionally small and do not own statistical decisions.
+`ui/components.py` keeps Streamlit rendering code out of `app.py`. These helpers are intentionally small and do not own statistical decisions.
+
+`ui/formatting.py` holds the *pure* presentation helpers (`first_sentence`, `duration_tone`, `build_card`, `sidebar_tip`). They contain no Streamlit calls, so unlike `app.py` — which executes Streamlit at import time — they can be imported and unit tested directly (`tests/test_formatting.py`).
+
+## Type contracts
+
+The statistical helpers return `TypedDict` results (`ChiSquaredResult`, `WelchTTestResult`, `SampleSizeResult`, `FrequentistGuardrails`, `BayesianAnalysisResult`, …) rather than loosely-typed dicts. This documents each result shape, lets `mypy --strict` verify call sites instead of forcing `float(...)`/`bool(...)` casts, and prevents key typos. The whole repo — `app.py`, `ui/`, `stats/`, `llm/`, and `tests/` — is checked under `mypy --strict` in CI.
 
 ## Tests
 
