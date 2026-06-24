@@ -1,6 +1,5 @@
 """Plot helpers that keep visualization logic out of the Streamlit app."""
 
-from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -15,7 +14,7 @@ def plot_posterior_distributions(
     beta_a: float,
     alpha_b: float,
     beta_b: float,
-    labels: Tuple[str, str] = ("Control", "Variant"),
+    labels: tuple[str, str] = ("Control", "Variant"),
 ) -> go.Figure:
     """Plot posterior beta distributions for two experiment groups."""
     x_values = np.linspace(0.0001, 0.9999, 500)
@@ -58,7 +57,7 @@ def plot_posterior_distributions(
 def plot_power_curve(
     baseline: float,
     daily_traffic: int,
-    mde_range: Tuple[float, float] = (0.02, 0.30),
+    mde_range: tuple[float, float] = (0.02, 0.30),
 ) -> go.Figure:
     """Plot the trade-off between detectable lift and experiment duration."""
     lower_mde, upper_mde = mde_range
@@ -164,7 +163,7 @@ def _smooth_series(
     df: pd.DataFrame,
     x_col: str,
     y_col: str,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Smooth a scatter series with LOWESS when available."""
     if df.empty:
         return np.array([]), np.array([])
