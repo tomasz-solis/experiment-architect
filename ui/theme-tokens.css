@@ -1,0 +1,58 @@
+/* =========================================================================
+   Product Decision Lab — shared design tokens + base spacing (source of truth).
+   Identical across product-decision-under-uncertainty, experiment-architect,
+   and measurement-maturity-framework. Edit it here, then copy this file
+   verbatim into the other two repos. Injected before each app's own CSS, so
+   app-specific rules still win wherever they set their own values.
+   Palette: periwinkle + mint.
+   ========================================================================= */
+:root {
+  /* Accent + semantic palette */
+  --ds-blue: #4f6dff;          /* primary accent */
+  --ds-blue-strong: #3a56e0;   /* AA-contrast accent text on light surfaces */
+  --ds-blue-soft: rgba(79, 109, 255, 0.12);
+  --ds-mint: #1ecf9b;          /* positive / healthy */
+  --ds-amber: #d18a1f;         /* caution */
+  --ds-red: #dd5b52;           /* risk */
+
+  /* Text */
+  --ds-ink: #10131a;           /* primary text */
+  --ds-muted: #646c79;         /* secondary text */
+
+  /* Surfaces */
+  --ds-bg: #eff2f7;            /* app background base */
+  --ds-bg-deep: #e7ebf3;       /* deeper background gradient stop */
+  --ds-card-bg: rgba(255, 255, 255, 0.80);
+  --ds-card-border: rgba(16, 19, 26, 0.08);
+
+  /* Dark sidebar gradient */
+  --ds-sidebar-top: #0d1320;
+  --ds-sidebar-bottom: #101925;
+
+  /* Type */
+  --ds-font-sans: "Avenir Next", "Segoe UI", "Helvetica Neue", system-ui, -apple-system, sans-serif;
+
+  /* Spacing */
+  --ds-gap: 0.85rem;           /* baseline breathing room between boxed surfaces */
+
+  /* Shape */
+  --ds-radius-card: 24px;
+  --ds-radius-pill: 999px;
+}
+
+/* Baseline breathing room so boxed surfaces never butt against each other.
+   This only sets a floor: any app rule that defines its own margin overrides
+   it, because each app's stylesheet is injected after this file. */
+[data-testid="stMetric"],
+[data-testid="stExpander"],
+[data-testid="stAlert"],
+[data-testid="stTable"],
+[data-testid="stDataFrame"],
+[data-testid="stPlotlyChart"] {
+  margin-bottom: var(--ds-gap);
+}
+
+/* Gap between side-by-side columns so cards/metrics don't touch horizontally. */
+[data-testid="stHorizontalBlock"] {
+  gap: var(--ds-gap);
+}
