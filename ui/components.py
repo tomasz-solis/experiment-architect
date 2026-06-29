@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html import escape
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -13,28 +14,34 @@ from stats.frequentist import FrequentistTestResult
 from ui.formatting import SummaryCard
 
 
+_THEME_TOKENS_PATH = Path(__file__).parent / "theme-tokens.css"
+
+
 def inject_app_styles() -> None:
     """Inject the editorial design system used across the app."""
+    tokens = _THEME_TOKENS_PATH.read_text(encoding="utf-8")
+    st.markdown(f"<style>{tokens}</style>", unsafe_allow_html=True)
     st.markdown(
         """
         <style>
             :root {
-                --bg: #eff2f7;
-                --ink: #10131a;
-                --muted: #646c79;
-                --blue: #4f6dff;
-                --mint: #1ecf9b;
-                --amber: #d18a1f;
-                --red: #dd5b52;
+                /* Local names map onto the shared design tokens (ui/theme-tokens.css). */
+                --bg: var(--ds-bg);
+                --ink: var(--ds-ink);
+                --muted: var(--ds-muted);
+                --blue: var(--ds-blue);
+                --mint: var(--ds-mint);
+                --amber: var(--ds-amber);
+                --red: var(--ds-red);
                 /* Darker tone variants for value text on light cards. The bright
                    tones above stay for decoration (gradients, chips, accents);
                    these meet WCAG AA contrast against the light --card-bg. */
-                --blue-text: #3a56e0;
+                --blue-text: var(--ds-blue-strong);
                 --mint-text: #0a7d5c;
                 --amber-text: #9a6a12;
                 --red-text: #c43d33;
-                --sidebar-top: #0d1320;
-                --sidebar-bottom: #101925;
+                --sidebar-top: var(--ds-sidebar-top);
+                --sidebar-bottom: var(--ds-sidebar-bottom);
                 --card-border: rgba(112, 128, 156, 0.16);
                 --card-bg: rgba(255, 255, 255, 0.72);
                 --card-shadow: 0 24px 56px rgba(24, 31, 48, 0.08);
@@ -51,6 +58,7 @@ def inject_app_styles() -> None:
                     radial-gradient(circle at 50% 100%, rgba(79, 109, 255, 0.08), transparent 34%),
                     var(--bg);
                 color: var(--ink);
+                font-family: var(--ds-font-sans);
             }
 
             [data-testid="stHeader"] {
@@ -202,7 +210,7 @@ def inject_app_styles() -> None:
             .editorial-hero h1,
             .summary-value,
             .signal-header h2 {
-                font-family: "Avenir Next", "Helvetica Neue", sans-serif;
+                font-family: var(--ds-font-sans);
                 font-variant-numeric: tabular-nums;
             }
 
