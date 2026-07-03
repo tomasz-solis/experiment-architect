@@ -111,6 +111,11 @@ The repo also includes a lightweight GitHub Actions workflow at `.github/workflo
 - The RDD bandwidth selector is a transparent rule of thumb, not an optimal bandwidth estimator.
 - PSM and CausalImpact remain code-generation paths, not in-app estimators.
 
-## Contact
+## Part of the Product Decision Lab
 
-Tomasz Solis - [LinkedIn](https://linkedin.com/in/tomaszsolis) · [GitHub](https://github.com/tomasz-solis)
+Experiment Architect is one of three headline projects in my
+[Product Decision Lab](https://github.com/tomasz-solis/product-decision-lab) —
+measurement readiness, experimentation, and decision analysis for product teams deciding
+under uncertainty.
+
+Tomasz Solis — [LinkedIn](https://www.linkedin.com/in/tomaszsolis) · [GitHub](https://github.com/tomasz-solis)
