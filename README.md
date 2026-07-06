@@ -73,7 +73,7 @@ LLM_PROVIDER = "openai"
 OPENAI_API_KEY = "sk-your-key-here"
 ```
 
-If you want the keep-awake workflow to ping the deployed app, add a repository variable named `STREAMLIT_APP_URL` with your app URL, for example `https://your-app-name.streamlit.app/`. If you only store the hostname, the workflow will prepend `https://` for you. It also keeps a small cookie jar so it can survive Streamlit's auth redirects. If it reports Streamlit's `not_found` page, the URL is stale or the app is no longer deployed at that address.
+The app is kept awake by a scheduled workflow in [product-decision-lab](https://github.com/tomasz-solis/product-decision-lab) that visits all three lab apps every six hours.
 
 ## Quick demo data
 
