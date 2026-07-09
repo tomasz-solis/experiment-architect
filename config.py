@@ -84,7 +84,7 @@ RDD_COEFFICIENT_STABILITY_THRESHOLD = 0.30
 RDD_MIN_SIDE_OBSERVATIONS = 30
 
 # Streamlit config
-PAGE_TITLE = "Test Architect"
+PAGE_TITLE = "Experiment Architect"
 PAGE_ICON = "Build"
 PAGE_LAYOUT: Literal["centered", "wide"] = "wide"
 

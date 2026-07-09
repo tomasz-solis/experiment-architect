@@ -1,8 +1,41 @@
 # Experiment Architect
 
-Experiment Architect is the repo for Test Architect, a Streamlit app for planning and analyzing product experiments. It covers A/B test sizing, causal method selection, CSV-based result analysis, and a small LLM layer that maps messy column names before Python runs the statistics.
+[![CI](https://github.com/tomasz-solis/experiment-architect/actions/workflows/tests.yml/badge.svg)](https://github.com/tomasz-solis/experiment-architect/actions/workflows/tests.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
-Live app: `https://testarchitect.streamlit.app/`
+> **Know whether an experiment can answer your question before you spend the traffic on it — and how to decide when it can't.**
+
+**[▶ Live demo](https://testarchitect.streamlit.app/)** — open it, upload the bundled
+sample CSV in the **Raw CSV audit** lens, and watch it size the test, run the analysis, and
+return a ship/hold call with guardrails. No install. (Hosted on Streamlit Community Cloud; if
+it has gone to sleep, give it a few seconds to wake.)
+
+**Run it locally:** `streamlit run app.py` for the interactive app · `uv run --extra dev pytest`
+to run the suite.
+
+Experiment Architect is a Streamlit app for planning and reading product experiments. It
+covers A/B test sizing, causal method selection, CSV-based result analysis, and a small LLM
+layer that maps messy column names before Python runs the statistics. (The app is hosted at
+`testarchitect.streamlit.app`.)
+
+## When to reach for this
+
+The tool is built around one judgment most A/B write-ups skip: whether the experiment in
+front of you can actually detect the effect you care about in the time you have — and what to
+do when it can't. Reach for it when:
+
+- **You are about to run an A/B test** and want the reverse-MDE answer first: what is the
+  smallest effect this test could detect given real traffic and baseline rate, before you
+  commit the traffic to it.
+- **Randomization is not clean** and you need to pick a causal fallback (DiD, RDD) honestly,
+  with the diagnostics that say whether the identifying assumptions hold.
+- **You want a ship/hold decision framed as expected loss**, not a bare significance verdict —
+  a direct probability the variant is better, and the cost if you ship it and you are wrong.
+
+Use something else when you already run a mature in-house experimentation platform with
+sequential testing (this is not a full sequential framework), when you need formal causal
+identification guarantees (the diagnostics here are warnings, not proofs), or when you need
+production metric pipelines rather than CSV-based analysis.
 
 ## What it does
 
@@ -17,15 +50,17 @@ Live app: `https://testarchitect.streamlit.app/`
 
 ## How the app is structured
 
-The repo follows a simple split:
+The repo keeps three concerns separate so the statistics stay testable without Streamlit:
 
 - `app.py`: Streamlit UI and orchestration.
 - `stats/`: statistical methods, diagnostics, plotting helpers, and input validation.
-- `llm/`: provider wrappers plus JSON retry/parsing helpers.
-- `ui/`: small rendering helpers.
+- `llm/`: provider wrappers plus JSON retry/parsing helpers. The LLM only proposes a column
+  schema; it never computes a statistic.
+- `ui/`: small, pure rendering helpers, unit-tested without Streamlit.
 - `tests/`: unit tests and simulation tests.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the fuller walkthrough.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the fuller walkthrough, including the request flow
+per analysis path and the type contracts.
 
 ## Installation
 
@@ -79,21 +114,24 @@ The app is kept awake by a scheduled workflow in [product-decision-lab](https://
 
 If you want a fast demo without preparing your own file, upload [examples/sample_ab_test.csv](examples/sample_ab_test.csv) in the **Raw CSV audit** lens. It contains 1,000 rows (500 control / 500 treatment), a binary `converted` column, and a continuous `revenue` column — enough to exercise both analysis paths.
 
-## Testing
+## Testing and quality
 
 ```bash
 uv run --extra dev pytest
 ```
 
-The current suite covers:
+The suite mixes unit tests and simulated-data checks:
 
-- frequentist helpers
-- Bayesian decision logic
-- causal simulation checks
-- LLM JSON retry logic
+- frequentist helpers (algebra, edge cases, chi-squared diagnostics)
+- Bayesian decision logic (posterior behavior and the loss-aware ship/hold rule)
+- causal simulation checks (synthetic data with known effects, plus placebo and manipulation checks)
+- LLM JSON retry logic (without calling a real provider)
 - dataframe validation contracts
 
-The repo also includes a lightweight GitHub Actions workflow at `.github/workflows/tests.yml` that installs `requirements-dev.txt` and runs `pytest`.
+Beyond the tests, the whole repo — `app.py`, `ui/`, `stats/`, `llm/`, and `tests/` — is checked
+under `mypy --strict` in CI, statistical helpers return `TypedDict` result shapes rather than
+loose dicts, and `tests/test_app_smoke.py` runs the real Streamlit script end-to-end through
+`AppTest`. CI (`.github/workflows/tests.yml`) runs the suite on Python 3.11.
 
 ## Notes on method choice
 
