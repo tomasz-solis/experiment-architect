@@ -4,12 +4,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
-> **Know whether an experiment can answer your question before you spend the traffic on it — and how to decide when it can't.**
+> **Know whether an experiment can answer your question before you spend the traffic on it. And what to do when it can't.**
 
-**[▶ Live demo](https://testarchitect.streamlit.app/)** — open it, upload the bundled
-sample CSV in the **Raw CSV audit** lens, and watch it size the test, run the analysis, and
-return a ship/hold call with guardrails. No install. (Hosted on Streamlit Community Cloud; if
-it has gone to sleep, give it a few seconds to wake.)
+**[▶ Live demo](https://testarchitect.streamlit.app/):** open it, run the **design** tab for a
+reverse-MDE read on a test before you launch it, or upload the bundled sample CSV in the **Raw
+CSV audit** lens for a full analysis with a loss-aware ship/hold call. No install. (Hosted on
+Streamlit Community Cloud; if it has gone to sleep, give it a few seconds to wake.)
 
 **Run it locally:** `streamlit run app.py` for the interactive app · `uv run --extra dev pytest`
 to run the suite.
@@ -26,7 +26,7 @@ call. For the code structure, see [ARCHITECTURE.md](ARCHITECTURE.md).
 ## When to reach for this
 
 The tool is built around one judgment most A/B write-ups skip: whether the experiment in
-front of you can actually detect the effect you care about in the time you have — and what to
+front of you can actually detect the effect you care about in the time you have, and what to
 do when it can't. Reach for it when:
 
 - **You are about to run an A/B test** and want the reverse-MDE answer first: what is the
@@ -34,7 +34,7 @@ do when it can't. Reach for it when:
   commit the traffic to it.
 - **Randomization is not clean** and you need to pick a causal fallback (DiD, RDD) honestly,
   with the diagnostics that say whether the identifying assumptions hold.
-- **You want a ship/hold decision framed as expected loss**, not a bare significance verdict —
+- **You want a ship/hold decision framed as expected loss**, not a bare significance verdict:
   a direct probability the variant is better, and the cost if you ship it and you are wrong.
 
 Use something else when you already run a mature in-house experimentation platform with
@@ -117,7 +117,7 @@ The app is kept awake by a scheduled workflow in [product-decision-lab](https://
 
 ## Quick demo data
 
-If you want a fast demo without preparing your own file, upload [examples/sample_ab_test.csv](examples/sample_ab_test.csv) in the **Raw CSV audit** lens. It contains 1,000 rows (500 control / 500 treatment), a binary `converted` column, and a continuous `revenue` column — enough to exercise both analysis paths.
+If you want a fast demo without preparing your own file, upload [examples/sample_ab_test.csv](examples/sample_ab_test.csv) in the **Raw CSV audit** lens. It contains 1,000 rows (500 control / 500 treatment), a binary `converted` column, and a continuous `revenue` column, enough to exercise both analysis paths.
 
 ## Testing and quality
 
@@ -133,7 +133,7 @@ The suite mixes unit tests and simulated-data checks:
 - LLM JSON retry logic (without calling a real provider)
 - dataframe validation contracts
 
-Beyond the tests, the whole repo — `app.py`, `ui/`, `stats/`, `llm/`, and `tests/` — is checked
+Beyond the tests, the whole repo (`app.py`, `ui/`, `stats/`, `llm/`, and `tests/`) is checked
 under `mypy --strict` in CI, statistical helpers return `TypedDict` result shapes rather than
 loose dicts, and `tests/test_app_smoke.py` runs the real Streamlit script end-to-end through
 `AppTest`. CI (`.github/workflows/tests.yml`) runs the suite on Python 3.11.
