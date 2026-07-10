@@ -1,6 +1,7 @@
 # Experiment Architect
 
 [![CI](https://github.com/tomasz-solis/experiment-architect/actions/workflows/tests.yml/badge.svg)](https://github.com/tomasz-solis/experiment-architect/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
 > **Know whether an experiment can answer your question before you spend the traffic on it — and how to decide when it can't.**
@@ -17,6 +18,10 @@ Experiment Architect is a Streamlit app for planning and reading product experim
 covers A/B test sizing, causal method selection, CSV-based result analysis, and a small LLM
 layer that maps messy column names before Python runs the statistics. (The app is hosted at
 `testarchitect.streamlit.app`.)
+
+If you are evaluating this as a portfolio sample, read [NARRATIVE.md](NARRATIVE.md) first: a
+walk-through of the decision this tool is built for, from a doomed A/B to a loss-aware ship
+call. For the code structure, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## When to reach for this
 
@@ -148,6 +153,10 @@ loose dicts, and `tests/test_app_smoke.py` runs the real Streamlit script end-to
 - The app includes Bonferroni-style multiple-comparison guardrails and a peeking warning, but it does not implement a full sequential-testing design.
 - The RDD bandwidth selector is a transparent rule of thumb, not an optimal bandwidth estimator.
 - PSM and CausalImpact remain code-generation paths, not in-app estimators.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
 
 ## Part of the Product Decision Lab
 
