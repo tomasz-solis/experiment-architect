@@ -13,7 +13,6 @@ from stats.bayesian import BayesianAnalysisResult
 from stats.frequentist import FrequentistTestResult
 from ui.formatting import SummaryCard
 
-
 _THEME_TOKENS_PATH = Path(__file__).parent / "theme-tokens.css"
 
 
@@ -33,22 +32,22 @@ def inject_app_styles() -> None:
                 --mint: var(--ds-mint);
                 --amber: var(--ds-amber);
                 --red: var(--ds-red);
-                /* Darker tone variants for value text on light cards. The bright
-                   tones above stay for decoration (gradients, chips, accents);
-                   these meet WCAG AA contrast against the light --card-bg. */
+                /* Deep forms for value text on light cards. The bright tones above are
+                   fills and marks only; these meet WCAG AA against the light --card-bg.
+                   They now live in the shared token file, so all three Lab apps get them. */
                 --blue-text: var(--ds-blue-strong);
-                --mint-text: #0a7d5c;
-                --amber-text: #9a6a12;
-                --red-text: #c43d33;
+                --mint-text: var(--ds-mint-deep);
+                --amber-text: var(--ds-amber-deep);
+                --red-text: var(--ds-red-deep);
                 --sidebar-top: var(--ds-sidebar-top);
                 --sidebar-bottom: var(--ds-sidebar-bottom);
                 --card-border: rgba(112, 128, 156, 0.16);
                 --card-bg: rgba(255, 255, 255, 0.72);
-                --card-shadow: 0 24px 56px rgba(24, 31, 48, 0.08);
-                --hero-shadow: 0 32px 72px rgba(16, 19, 26, 0.28);
-                --radius-xl: 32px;
-                --radius-lg: 24px;
-                --radius-md: 18px;
+                /* Flat at rest: resting surfaces separate with the hairline border, not depth.
+                   Only the hero is allowed to sit visibly above the page.
+                   See DESIGN.md, The Flat-At-Rest Rule. */
+                --card-shadow: none;
+                --hero-shadow: 0 30px 72px rgba(12, 16, 24, 0.22);
             }
 
             .stApp {
@@ -115,12 +114,15 @@ def inject_app_styles() -> None:
                 color: var(--ink);
                 padding: 0.7rem 1.15rem;
                 font-weight: 600;
-                box-shadow: 0 10px 24px rgba(79, 109, 255, 0.08);
+                transition: transform 140ms ease-out, box-shadow 140ms ease-out, border-color 140ms ease-out;
             }
 
+            /* The lift is the hover state, not the resting state. */
             .stButton > button:hover {
                 border-color: rgba(79, 109, 255, 0.34);
                 color: var(--blue-text);
+                transform: translateY(-1px);
+                box-shadow: 0 12px 24px rgba(79, 109, 255, 0.12);
             }
 
             [data-baseweb="select"] > div,
@@ -131,6 +133,8 @@ def inject_app_styles() -> None:
                 border-radius: 18px;
             }
 
+            /* Sentence-case labels. An uppercase tracked eyebrow on every form field
+               makes the controls shout; see DESIGN.md, The Eyebrow Rule. */
             .stSelectbox label,
             .stRadio label,
             .stNumberInput label,
@@ -138,10 +142,8 @@ def inject_app_styles() -> None:
             .stTextArea label,
             .stFileUploader label {
                 color: var(--ink);
-                font-size: 0.78rem;
-                font-weight: 700;
-                letter-spacing: 0.12em;
-                text-transform: uppercase;
+                font-size: 0.82rem;
+                font-weight: 600;
             }
 
             div[data-testid="stMetric"] {
@@ -150,13 +152,11 @@ def inject_app_styles() -> None:
                 border-radius: 24px;
                 padding: 1rem 1rem 0.9rem;
                 box-shadow: var(--card-shadow);
-                backdrop-filter: blur(18px);
             }
 
             div[data-testid="stMetric"] label {
-                font-size: 0.74rem;
-                text-transform: uppercase;
-                letter-spacing: 0.12em;
+                font-size: 0.82rem;
+                font-weight: 600;
                 color: var(--muted);
             }
 
@@ -178,7 +178,7 @@ def inject_app_styles() -> None:
             }
 
             div[data-testid="stAlert"] {
-                border-radius: 22px;
+                border-radius: 24px;
                 border: 1px solid rgba(16, 19, 26, 0.06);
             }
 
@@ -243,7 +243,7 @@ def inject_app_styles() -> None:
                 position: relative;
                 overflow: hidden;
                 padding: 2rem 2.2rem 2.05rem;
-                border-radius: 36px;
+                border-radius: 28px;
                 color: #f6f8fc;
                 background:
                     radial-gradient(circle at 12% 18%, rgba(79, 109, 255, 0.28), transparent 22%),
@@ -313,22 +313,22 @@ def inject_app_styles() -> None:
             .summary-card,
             .empty-card,
             .section-note {
-                border-radius: 26px;
+                border-radius: 24px;
                 border: 1px solid var(--card-border);
                 background: var(--card-bg);
                 box-shadow: var(--card-shadow);
-                backdrop-filter: blur(18px);
             }
 
             .summary-card {
                 padding: 1.15rem 1.15rem 1rem;
             }
 
+            /* The anchor card earns emphasis from the dark fill and the periwinkle
+               border, not from depth. Flat at rest applies to featured cards too. */
             .summary-card.anchor {
                 background:
                     linear-gradient(180deg, rgba(16, 19, 26, 0.96), rgba(18, 24, 36, 0.90));
                 border-color: rgba(79, 109, 255, 0.24);
-                box-shadow: var(--hero-shadow);
             }
 
             .summary-label,
@@ -336,10 +336,8 @@ def inject_app_styles() -> None:
             .signal-label,
             .note-label {
                 margin: 0;
-                font-size: 0.74rem;
-                font-weight: 700;
-                letter-spacing: 0.18em;
-                text-transform: uppercase;
+                font-size: 0.82rem;
+                font-weight: 600;
                 color: var(--muted);
             }
 

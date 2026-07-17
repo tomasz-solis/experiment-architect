@@ -7,13 +7,35 @@
    Palette: periwinkle + mint.
    ========================================================================= */
 :root {
-  /* Accent + semantic palette */
+  /* Accent + semantic palette.
+     Every hue has a LIGHT form (fills, marks, backgrounds) and a DEEP form
+     (text, strokes, chart series on the light field). The light forms are too
+     pale to carry meaning on white: mint measures 2.0:1 and amber 2.7:1 against
+     the panel, both below the 3:1 non-text floor. Any coloured *text* or stroke
+     on a light surface must use the -deep form. See DESIGN.md, The Deep-Form Rule. */
   --ds-blue: #4f6dff;          /* primary accent */
   --ds-blue-strong: #3a56e0;   /* AA-contrast accent text on light surfaces */
   --ds-blue-soft: rgba(79, 109, 255, 0.12);
-  --ds-mint: #1ecf9b;          /* positive / healthy */
-  --ds-amber: #d18a1f;         /* caution */
-  --ds-red: #dd5b52;           /* risk */
+  --ds-mint: #1ecf9b;          /* positive / healthy — fills and marks only */
+  --ds-mint-deep: #0a7d5c;     /* positive / healthy — text and strokes (5.1:1 on white) */
+  --ds-amber: #d18a1f;         /* caution — fills and marks only */
+  --ds-amber-deep: #9a6a12;    /* caution — text and strokes */
+  --ds-red: #dd5b52;           /* risk — fills and marks only */
+  --ds-red-deep: #c43d33;      /* risk — text and strokes */
+
+  /* Chart series: one categorical ramp, shared by every Lab app, in this order.
+     Adjacent series differ in lightness as well as hue, and colour must always be
+     paired with a marker, dash, or label — never hue alone. */
+  --ds-chart-1: #4f6dff;       /* periwinkle */
+  --ds-chart-2: #0a7d5c;       /* deep mint */
+  --ds-chart-3: #b5741a;       /* deep amber */
+  --ds-chart-4: #c43d33;       /* deep red */
+  --ds-chart-baseline: #646c79;/* muted slate — the do-nothing / baseline series */
+  --ds-chart-grid: #dde3ec;
+
+  /* Focus: one visible ring, on every interactive element, on both surfaces. */
+  --ds-focus-ring: 2px solid #4f6dff;
+  --ds-focus-offset: 2px;
 
   /* Text */
   --ds-ink: #10131a;           /* primary text */
@@ -55,4 +77,32 @@
 /* Gap between side-by-side columns so cards/metrics don't touch horizontally. */
 [data-testid="stHorizontalBlock"] {
   gap: var(--ds-gap);
+}
+
+/* Visible focus on every interactive element. Streamlit/BaseWeb's default ring
+   all but disappears on the ink-filled selected tab and on the dark sidebar, so
+   state it once here for every app. */
+:is(button, [role="tab"], a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: var(--ds-focus-ring);
+  outline-offset: var(--ds-focus-offset);
+}
+
+/* Reduced motion. Each app animates panel entrances and hover lifts; this file is
+   injected BEFORE the app's own stylesheet, so the app's animation rules would
+   otherwise win on order. !important is the deliberate override — an accessibility
+   preference outranks a house transition. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Hover lifts translate; pin them so nothing moves under the pointer. */
+  *:hover {
+    transform: none !important;
+  }
 }

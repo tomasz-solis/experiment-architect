@@ -8,6 +8,17 @@ from scipy.stats import beta as beta_dist
 
 from stats.frequentist import calculate_sample_size
 
+# The shared Product Decision Lab categorical ramp (DESIGN.md section 2,
+# --ds-chart-* in ui/theme-tokens.css). These plots previously shipped the
+# matplotlib tab10 defaults (#1f77b4 / #ff7f0e / #2ca02c), which nobody chose and
+# which made this app's charts look like a different product from its siblings.
+# Adjacent series differ in lightness as well as hue, and every series pairs its
+# colour with a dash or marker — colour never carries meaning on its own.
+SERIES_PRIMARY = "#4f6dff"    # periwinkle
+SERIES_SECONDARY = "#0a7d5c"  # deep mint
+SERIES_BASELINE = "#646c79"   # muted slate: reference lines, guides
+INK = "#10131a"
+
 
 def plot_posterior_distributions(
     alpha_a: float,
@@ -28,7 +39,7 @@ def plot_posterior_distributions(
             y=density_a,
             mode="lines",
             name=labels[0],
-            line=dict(color="#1f77b4", width=3),
+            line=dict(color=SERIES_PRIMARY, width=3),
             fill="tozeroy",
             opacity=0.45,
         )
@@ -39,7 +50,7 @@ def plot_posterior_distributions(
             y=density_b,
             mode="lines",
             name=labels[1],
-            line=dict(color="#ff7f0e", width=3),
+            line=dict(color=SERIES_SECONDARY, width=3),
             fill="tozeroy",
             opacity=0.45,
         )
@@ -80,11 +91,11 @@ def plot_power_curve(
             y=y_values,
             mode="lines",
             name="Days required",
-            line=dict(color="#2ca02c", width=3),
+            line=dict(color=SERIES_PRIMARY, width=3),
         )
     )
     for label, days, dash in (("2 weeks", 14, "dash"), ("4 weeks", 28, "dot")):
-        figure.add_hline(y=days, line_dash=dash, line_color="#7f7f7f", annotation_text=label)
+        figure.add_hline(y=days, line_dash=dash, line_color=SERIES_BASELINE, annotation_text=label)
 
     figure.update_layout(
         title="How long do you need to wait?",
@@ -113,7 +124,7 @@ def plot_rdd_discontinuity(
             y=control[outcome_col],
             mode="markers",
             name="Control",
-            marker=dict(color="#1f77b4", size=7, opacity=0.45),
+            marker=dict(color=SERIES_PRIMARY, size=7, opacity=0.45),
         )
     )
     figure.add_trace(
@@ -122,13 +133,13 @@ def plot_rdd_discontinuity(
             y=treated[outcome_col],
             mode="markers",
             name="Treated",
-            marker=dict(color="#ff7f0e", size=7, opacity=0.45),
+            marker=dict(color=SERIES_SECONDARY, size=7, opacity=0.45),
         )
     )
 
     for subset, label, color in (
-        (control, "Control trend", "#1f77b4"),
-        (treated, "Treated trend", "#ff7f0e"),
+        (control, "Control trend", SERIES_PRIMARY),
+        (treated, "Treated trend", SERIES_SECONDARY),
     ):
         smooth_x, smooth_y = _smooth_series(subset, running_var, outcome_col)
         if len(smooth_x) == 0:
@@ -147,7 +158,7 @@ def plot_rdd_discontinuity(
         x=cutoff,
         line_width=2,
         line_dash="dash",
-        line_color="#111111",
+        line_color=INK,
         annotation_text=f"Cutoff = {cutoff}",
     )
     figure.update_layout(
