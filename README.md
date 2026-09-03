@@ -36,6 +36,11 @@ do when it can't. Reach for it when:
   with the diagnostics that say whether the identifying assumptions hold.
 - **You want a ship/hold decision framed as expected loss**, not a bare significance verdict:
   a direct probability the variant is better, and the cost if you ship it and you are wrong.
+- **The metric is money rather than a conversion rate**, so variance drives the sample size and
+  you need the pre-period covariate, the maturation window, and a simulation check before you
+  trust any of it.
+- **You want the readout to check the plan**, so the delivered sample, split, estimand, and
+  outcome transform are compared against what was pre-registered before anyone reads the lift.
 
 Use something else when you already run a mature in-house experimentation platform with
 sequential testing (this is not a full sequential framework), when you need formal causal
@@ -45,6 +50,11 @@ production metric pipelines rather than CSV-based analysis.
 ## What it does
 
 - Designs A/B tests with sample size, reverse MDE, split-ratio penalty, and deterministic sanity checks.
+- Sizes value metrics on variance rather than a base rate, and prices CUPED variance reduction from a pre/post correlation measured in your own data.
+- Converts a sample requirement into a calendar date using newly eligible users per day, the safety ramp, and the maturation window the last enrolled cohort still needs.
+- Simulates the experiment on uploaded historical outcomes when the metric is skewed, and reports the false-positive rate under no effect so a miscalibrated analysis shows up before launch.
+- Costs treatment doses against calendar time, and separates intention-to-treat from the complier effect when take-up is partial.
+- Locks the design as a pre-registration, then checks the readout against it: sample delivered, split drift, estimand, outcome transform, alpha spend, and the smallest guardrail regression the test could have caught.
 - Shows a sensitivity view so you can see how traffic and baseline assumptions change the detectable effect.
 - Recommends a causal method when randomization is not possible.
 - Runs DiD with a parallel-trends pre-test and clustered standard errors.
@@ -117,7 +127,9 @@ The app is kept awake by a scheduled workflow in [product-decision-lab](https://
 
 ## Quick demo data
 
-If you want a fast demo without preparing your own file, upload [examples/sample_ab_test.csv](examples/sample_ab_test.csv) in the **Raw CSV audit** lens. It contains 1,000 rows (500 control / 500 treatment), a binary `converted` column, and a continuous `revenue` column, enough to exercise both analysis paths.
+If you want a fast demo without preparing your own file, upload [examples/sample_ab_test.csv](examples/sample_ab_test.csv) in the **Raw CSV audit** lens. It contains 1,000 rows (500 control / 500 treatment), a binary `converted` column, and a continuous `revenue` column, enough to exercise both analysis paths. The same file works in the **Power and plan** lens: point
+the historical-outcomes uploader at it and use `revenue` as the outcome column to see the skew
+diagnostics and the simulation-based power check.
 
 ## Testing and quality
 

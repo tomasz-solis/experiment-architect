@@ -17,6 +17,8 @@ experiment-architect/
 │   ├── decision_cards.py
 │   ├── frequentist.py
 │   ├── plots.py
+│   ├── power.py
+│   ├── prereg.py
 │   ├── sanity.py
 │   └── validation.py
 ├── tests/
@@ -29,6 +31,8 @@ experiment-architect/
 │   ├── test_frequentist.py
 │   ├── test_llm_client.py
 │   ├── test_plots.py
+│   ├── test_power.py
+│   ├── test_prereg.py
 │   ├── test_providers.py
 │   ├── test_sanity.py
 │   └── test_validation.py
@@ -64,6 +68,19 @@ The design tab uses deterministic code only:
 - `stats.plots.plot_power_curve`
 
 The sensitivity expander stays in the UI layer, but it only calls those helpers and renders the outputs.
+
+### Power, variance, and the pre-registered plan
+
+The planning section is deterministic and self-contained:
+
+- `stats.power.sample_size_continuous` and `mde_from_sample_continuous` size a value metric from its variance rather than a base rate
+- `stats.power.cuped_variance_retained` and `estimate_cuped_rho` price variance reduction against a measured pre-period correlation
+- `stats.power.plan_duration` converts a sample requirement into calendar time, including the ramp phase and the maturation window the last cohort still needs
+- `stats.power.skew_diagnostics` and `simulate_power` replace the normal approximation with a measurement when the metric is heavily skewed
+- `stats.power.intensity_options` and `compliance_effects` cost treatment doses and separate ITT from the complier effect
+- `stats.prereg.build_preregistration` freezes the design in session state
+
+The last one is what connects the two halves of the app. Once a plan is locked, the manual and CSV readouts call `stats.prereg.verify_against_plan` and render the delivered sample, split, estimand, transform, alpha spend, and guardrail sensitivity against what was promised, before the effect is shown.
 
 ### Raw CSV analysis
 
@@ -102,6 +119,26 @@ Contains:
 The reverse-MDE helper uses the same split-factor logic as the sample-size helper, so the two calculations stay aligned.
 
 For continuous outcomes, Welch's t-test exposes two effect sizes: pooled-SD Cohen's d (the default) and an `"averaged"` form using `sqrt((var_a + var_b) / 2)`, which is the variance structure Welch itself uses and the consistent choice under unequal variances. When a group has 30 or fewer observations, the app switches to that effect size and a percentile bootstrap CI (`bootstrap_ci_relative_lift_continuous`), which avoids the normal approximation that gets brittle on small or skewed samples.
+
+### `stats/power.py`
+
+Covers the planning mathematics that a binary sample-size formula leaves out:
+
+- continuous-outcome sizing, where the requirement scales with variance rather than a base rate
+- CUPED and regression-adjustment variance reduction, including estimating the pre/post correlation from real data
+- the allocation penalty an uneven split pays, shared with `stats/frequentist.py` so the two cannot diverge
+- duration planning that separates newly eligible units from daily actives and adds the maturation window of the last enrolled cohort
+- treatment-intensity costing with the marginal return per extra effect point
+- ITT as the primary estimand plus CACE/LATE via the Wald instrumental-variables ratio
+- skew diagnostics and simulation-based power, which resample real historical outcomes and run the exact planned analysis, including any pre-registered winsorisation
+- the smallest guardrail regression the test could actually have detected
+- a metric-layer classifier that fails an outcome defined on post-assignment state
+
+The simulation always runs a zero-lift case alongside the powered one. If the false-positive rate under no effect is not close to alpha, the analysis method is miscalibrated on that distribution and any closed-form sample size is unreliable, so the result says so rather than leaving it to the reader.
+
+### `stats/prereg.py`
+
+Holds the pre-registration contract and the verification that carries it into the readout. `build_preregistration` records the decisions most often revised after data arrives, particularly the outcome transform and the number of primary metrics. `verify_against_plan` returns one row per commitment, ordered so a broken commitment is read before the effect it would otherwise qualify. `summarise_readout` states the result as absolute uplift, relative uplift, interval, and business impact, and separates an inconclusive test from evidence of no effect.
 
 ### `stats/bayesian.py`
 
@@ -195,4 +232,8 @@ For repo hygiene, `.github/workflows/tests.yml` runs the test suite on GitHub Ac
 - DiD uses a useful pre-trend warning, but passing that test does not prove identification.
 - RDD uses a rule-of-thumb local bandwidth and sweep diagnostics rather than a formal optimal bandwidth estimator.
 - Continuous-metric analysis still assumes mean-based summaries are sensible; heavily skewed revenue can need extra work.
-- The app exposes Bonferroni-style multiple-comparison guardrails and an early-peeking warning, but not a full sequential-testing framework.
+- The app exposes Bonferroni-style multiple-comparison guardrails and an early-peeking warning, but not a full sequential-testing framework. Unplanned looks are flagged, not corrected with an alpha-spending schedule.
+- Simulation-based power resamples the uploaded history, so it inherits whatever selection that sample carries. It answers "is the analysis method calibrated on this shape", not "is this sample representative".
+- CACE/LATE assumes the exclusion restriction and no defiers. The app reports it as a labelled secondary to ITT and does not test those assumptions.
+- Cluster randomisation is not sized: the sample formulas assume independent units, so a test randomised by team, market, or account needs a design-effect adjustment the app does not apply.
+- Plan verification depends on analyst attestation for the facts the app cannot observe, such as whether the analysis really covered every randomised unit.

@@ -79,6 +79,33 @@ that the experiment in front of you cannot answer the question you are asking.
 
 ---
 
+## Before reframing: is the power actually gone, or just unbought?
+
+"Underpowered" is a conclusion people reach too early. Three things move the
+sample requirement, and only one of them is traffic.
+
+**Variance.** The requirement scales with the square of the outcome's standard
+deviation, so anything that removes noise removes sample. In this scenario most
+of these users have months of history, and their pre-period behaviour correlates
+with the outcome at roughly 0.5. Adjusting on it (CUPED) removes about a quarter
+of the required traffic. That is real, it costs analysis time rather than
+calendar time, and it is worth checking before declaring the test impossible.
+
+**Effect.** The requirement falls with the square of the effect, so a stronger
+version of the change needs less traffic. The catch is that the response curve
+flattens while the cost per user does not, and a dose you would never ship
+answers a question nobody asked. The power section prices each dose in days so
+that trade is visible rather than argued.
+
+**Time.** The last lever, and the one that was already fixed at three weeks.
+
+Here the honest arithmetic is that variance reduction and a stronger dose
+together still do not close a gap that large. The test stays underpowered for
+the lift question. What changed is that the team can say *why*, with numbers,
+instead of "we didn't have enough traffic."
+
+---
+
 ## The reframe: answer a question the test can answer, then decide on loss
 
 Once the primary A/B is off the table, the decision does not collapse into "go
@@ -137,6 +164,14 @@ close.
   possible at all and the app routes to DiD or RDD, the parallel-trends and
   density checks flag problems; passing them does not prove identification. The
   tool surfaces the diagnostic so you argue with it, rather than burying it.
+- **A guardrail that "held" may simply have been invisible.** Rare guardrails,
+  failed payments or complaints, need far more sample than the primary metric.
+  The app reports the smallest regression the test could have detected, so
+  "no guardrail moved" can be read as either reassurance or as silence.
+- **A locked plan is checked, not enforced.** The readout compares delivered
+  sample, split, estimand, outcome transform, and alpha spend against what was
+  pre-registered, and says which commitments broke. It cannot know whether the
+  analysis really covered every randomised unit; that stays an attestation.
 - **The LLM never computes the statistic.** It maps messy column names to roles
   so Python can run the maths. A human still owns whether the mapping is
   semantically right.
