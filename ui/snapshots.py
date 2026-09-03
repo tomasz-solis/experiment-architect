@@ -30,6 +30,7 @@ from stats.frequentist import (
     check_srm,
     chi_squared_test,
 )
+from stats.power import plan_duration, sample_size_continuous
 from stats.sanity import run_all_checks, severity_rank
 from ui.formatting import build_card, duration_tone, first_sentence
 from ui.state import (
@@ -48,12 +49,20 @@ from ui.state import (
     MANUAL_PEEKED_EARLY,
     MANUAL_VISITORS_A,
     MANUAL_VISITORS_B,
+    POWER_DAILY_NEW,
+    POWER_MATURATION,
+    POWER_MDE_ABS,
+    POWER_RAMP,
+    POWER_RHO,
+    POWER_SD,
+    PREREG_PLAN,
     RDD_UPLOAD,
     read_uploaded_dataframe,
 )
 
 REVIEW_FOCI = [
     "Experiment design",
+    "Power and plan",
     "Manual result read",
     "Raw CSV audit",
     "Causal fallback",
@@ -100,6 +109,74 @@ def design_snapshot() -> dict[str, Any]:
                 "amber" if size["split_penalty"] > 0 else "mint",
             ),
             build_card("Weakest signal", weakest_value, weakest_meta, {"ok": "mint", "caution": "amber", "fail": "red"}[weakest_status]),
+        ],
+    }
+
+
+def power_snapshot() -> dict[str, Any]:
+    """Build hero and summary content for the power-and-plan lens."""
+    sd = float(st.session_state.get(POWER_SD, 120.0))
+    mde_absolute = float(st.session_state.get(POWER_MDE_ABS, 4.0))
+    rho = float(st.session_state.get(POWER_RHO, 0.0))
+    split_ratio = float(st.session_state.get(MAIN_SPLIT, 50)) / 100
+    daily_new = float(st.session_state.get(POWER_DAILY_NEW, 900))
+    maturation = int(st.session_state.get(POWER_MATURATION, 30))
+    ramp = int(st.session_state.get(POWER_RAMP, 0))
+
+    try:
+        size = sample_size_continuous(
+            sd=sd, mde_absolute=mde_absolute, split_ratio=split_ratio, rho=rho
+        )
+        duration = plan_duration(
+            n_total=size["n_total"],
+            daily_new_eligible=daily_new,
+            maturation_days=maturation,
+            ramp_days=ramp,
+        )
+    except ValueError as error:
+        return {
+            "kicker": "Power and plan",
+            "title": "The planning inputs do not resolve yet.",
+            "body": str(error),
+            "pills": ["Continuous outcome", "Variance reduction", "Duration"],
+            "cards": [
+                build_card("Review lens", "Power and plan", "Fix the inputs to size the test.", "amber", anchor=True),
+            ],
+        }
+
+    saved = 1 - size["variance_retained"]
+    plan_locked = st.session_state.get(PREREG_PLAN) is not None
+
+    return {
+        "kicker": "Power, variance and duration",
+        "title": "Buy the effect with variance reduction before you buy it with traffic.",
+        "body": (
+            "Sample scales with the square of the noise and the inverse square of the effect. "
+            "That makes the standard deviation, the pre-period covariate, and the maturation "
+            "window the three numbers that actually set the launch date."
+        ),
+        "pills": [
+            "Continuous outcome",
+            f"SD {sd:,.0f}",
+            f"MDE {mde_absolute:,.2f}",
+            f"CUPED rho {rho:.2f}",
+        ],
+        "cards": [
+            build_card("Review lens", "Power and plan", "Size on variance, not on hope.", "blue", anchor=True),
+            build_card("Required sample", f"{size['n_total']:,}", "Both arms, at the current split.", "mint"),
+            build_card(
+                "Calendar time",
+                f"{duration['total_days']} days",
+                duration["binding_constraint"],
+                duration_tone(duration["total_days"]),
+            ),
+            build_card(
+                "Traffic saved by CUPED" if saved > 0 else "Pre-registration",
+                f"{saved:.0%}" if saved > 0 else ("Locked" if plan_locked else "Not locked"),
+                "Variance removed by the pre-period covariate." if saved > 0
+                else "Lock the plan so the readout can verify it.",
+                "mint" if (saved > 0 or plan_locked) else "amber",
+            ),
         ],
     }
 
@@ -313,6 +390,8 @@ def build_page_snapshot(review_focus: str, ai_enabled: bool) -> dict[str, Any]:
     """Build top-of-page hero and summary content for the selected lens."""
     if review_focus == "Experiment design":
         return design_snapshot()
+    if review_focus == "Power and plan":
+        return power_snapshot()
     if review_focus == "Manual result read":
         return manual_snapshot()
     if review_focus == "Raw CSV audit":

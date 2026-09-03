@@ -11,6 +11,7 @@ import streamlit as st
 from config import ALPHA
 from stats.bayesian import BayesianAnalysisResult
 from stats.frequentist import FrequentistTestResult
+from stats.prereg import PreRegistration, ReadoutSummary, VerificationRow
 from ui.formatting import SummaryCard
 
 _THEME_TOKENS_PATH = Path(__file__).parent / "theme-tokens.css"
@@ -306,7 +307,9 @@ def inject_app_styles() -> None:
             }
 
             .empty-grid {
-                grid-template-columns: repeat(3, minmax(0, 1fr));
+                /* Four signal cards read as a balanced 2x2 block. A three-across
+                   grid leaves the fourth card stranded on its own row. */
+                grid-template-columns: repeat(2, minmax(0, 1fr));
                 margin-top: 1.25rem;
             }
 
@@ -630,3 +633,71 @@ def show_bayesian_decision(
             f"Expected loss threshold: {loss_tolerance:.2%}. "
             f"Current expected loss: {expected_loss:.3%}."
         )
+
+
+def show_plan_verification(rows: list[VerificationRow]) -> None:
+    """Render the pre-registered plan against what the experiment actually did.
+
+    Ordered worst-first so a broken commitment is read before the effect it
+    would otherwise qualify.
+    """
+    ranked = sorted(rows, key=lambda row: {"fail": 0, "caution": 1, "ok": 2}[row["status"]])
+    table = pd.DataFrame(
+        [
+            {
+                "What you promised": row["item"],
+                "Planned": row["planned"],
+                "What happened": row["actual"],
+                "Status": {"ok": "ok", "caution": "check this", "fail": "broken"}[row["status"]],
+            }
+            for row in ranked
+        ]
+    )
+    st.dataframe(table, hide_index=True, width="stretch")
+
+    for row in ranked:
+        if row["status"] == "fail":
+            st.error(f"{row['item']}: {row['note']}")
+        elif row["status"] == "caution":
+            st.warning(f"{row['item']}: {row['note']}")
+
+
+def show_readout_summary(summary: ReadoutSummary) -> None:
+    """Render a result decision-first: effect, then uncertainty, then money."""
+    if summary["material"]:
+        st.success(summary["headline"])
+    elif summary["conclusive"]:
+        st.info(summary["headline"])
+    else:
+        st.warning(summary["headline"])
+
+    left, right = st.columns(2)
+    left.metric("Change in the metric", f"{summary['absolute_uplift']:+.4f}")
+    right.metric("Change as a percentage", f"{summary['relative_uplift']:+.2%}")
+    st.caption(summary["uncertainty_line"])
+
+    if summary["business_impact"] is not None:
+        low, high = summary["business_impact"]
+        st.caption(
+            f"Across everyone a full rollout would reach, that is worth somewhere between "
+            f"{low:,.0f} and {high:,.0f}. The range is the honest answer. The single number "
+            "people usually quote is just one point inside it."
+        )
+
+
+def show_preregistration(plan: PreRegistration) -> None:
+    """Render the locked plan so it stays visible while the result is read."""
+    st.caption(f"Plan written down {plan['created_at']} for '{plan['primary_metric']}'.")
+    left, middle, right = st.columns(3)
+    left.metric("Users planned", f"{plan['n_total']:,}")
+    middle.metric("Change to detect", f"{plan['mde_relative']:.1%}")
+    right.metric("Days planned", f"{plan['total_days']} days")
+    st.caption(
+        f"False alarms accepted {plan['alpha']:.3f} · chance of spotting the change "
+        f"{plan['power']:.0%} · split {plan['split_ratio']:.0%} · counting "
+        f"{'everyone who entered' if plan['estimand'] == 'ITT' else plan['estimand']} · trimming "
+        f"{plan['transform']} · {plan['n_primary_metrics']} main metric(s) · "
+        f"{plan['planned_looks']} planned check(s)"
+    )
+    if plan["decision_rule"]:
+        st.caption(f"Agreed in advance: {plan['decision_rule']}")

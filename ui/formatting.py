@@ -22,6 +22,7 @@ class SummaryCard(TypedDict):
 
 SIDEBAR_TIPS: dict[str, str] = {
     "Experiment design": "Size the claim before you size the excitement.",
+    "Power and plan": "Variance is the tax. Reduce it before you buy more traffic.",
     "Manual result read": "A winner with a weak stop rule is not a winner yet.",
     "Raw CSV audit": "Mapped columns are still assumptions until you inspect the frame.",
     "Causal fallback": "When randomization fails, the assumption becomes the product.",

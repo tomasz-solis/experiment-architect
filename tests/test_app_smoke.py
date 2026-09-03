@@ -13,6 +13,7 @@ from streamlit.testing.v1 import AppTest
 
 LENSES = [
     "Experiment design",
+    "Power and plan",
     "Manual result read",
     "Raw CSV audit",
     "Causal fallback",
@@ -51,3 +52,25 @@ def test_manual_lens_handles_count_mismatch(app: AppTest) -> None:
     app.number_input(key="manual_visitors_a").set_value(100).run()
     app.number_input(key="manual_conversions_a").set_value(500).run()
     assert not app.exception
+
+
+def test_power_lens_sizes_a_continuous_metric(app: AppTest) -> None:
+    """The variance-driven sizing path recomputes without error."""
+    app.radio(key="review_focus").set_value("Power and plan").run()
+    app.number_input(key="power_sd").set_value(240.0).run()
+    app.number_input(key="power_mde_abs").set_value(2.0).run()
+    assert not app.exception
+
+
+def test_locking_a_plan_makes_the_readout_verify_against_it(app: AppTest) -> None:
+    """Locking in Signal 02 turns on the plan-versus-delivery check downstream."""
+    app.button(key="prereg_lock_button").click().run()
+    assert not app.exception
+
+    app.number_input(key="manual_visitors_a").set_value(1000).run()
+    app.number_input(key="manual_visitors_b").set_value(1400).run()
+    app.button(key="manual_result_button").click().run()
+    assert not app.exception
+
+    rendered = " ".join(block.value for block in app.markdown)
+    assert "What you promised, and what you got" in rendered

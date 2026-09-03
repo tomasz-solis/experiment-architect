@@ -22,6 +22,21 @@ MAIN_MDE = "main_mde"
 MAIN_TRAFFIC = "main_traffic"
 MAIN_SPLIT = "main_split"
 
+# Power-and-plan lens
+POWER_METRIC_LAYER = "power_metric_layer"
+POWER_SD = "power_sd"
+POWER_BASELINE_MEAN = "power_baseline_mean"
+POWER_MDE_ABS = "power_mde_abs"
+POWER_ALPHA = "power_alpha"
+POWER_POWER = "power_power"
+POWER_RHO = "power_rho"
+POWER_DAILY_NEW = "power_daily_new"
+POWER_MATURATION = "power_maturation"
+POWER_RAMP = "power_ramp"
+POWER_GUARDRAIL_BASELINE = "power_guardrail_baseline"
+POWER_UPLOAD = "power_upload"
+PREREG_PLAN = "prereg_plan"
+
 # Manual-result lens
 MANUAL_VISITORS_A = "manual_visitors_a"
 MANUAL_CONVERSIONS_A = "manual_conversions_a"
@@ -40,7 +55,7 @@ CSV_UPLOAD = "csv_upload"
 DID_UPLOAD = "did_upload"
 RDD_UPLOAD = "rdd_upload"
 
-UPLOAD_KEYS = (CSV_UPLOAD, DID_UPLOAD, RDD_UPLOAD)
+UPLOAD_KEYS = (CSV_UPLOAD, DID_UPLOAD, RDD_UPLOAD, POWER_UPLOAD)
 
 
 def read_uploaded_dataframe(widget_key: str) -> pd.DataFrame | None:

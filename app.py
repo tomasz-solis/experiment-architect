@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, TypedDict
 
 import numpy as np
 import pandas as pd
@@ -33,6 +33,26 @@ from stats.frequentist import (
     welch_t_test,
 )
 from stats.plots import plot_power_curve
+from stats.power import (
+    METRIC_LAYERS,
+    DurationPlan,
+    MetricLayer,
+    compliance_effects,
+    estimate_cuped_rho,
+    guardrail_detectable_harm,
+    intensity_options,
+    plan_duration,
+    post_treatment_risk,
+    sample_size_continuous,
+    simulate_power,
+    skew_diagnostics,
+)
+from stats.prereg import (
+    PreRegistration,
+    build_preregistration,
+    summarise_readout,
+    verify_against_plan,
+)
 from stats.sanity import run_all_checks
 from stats.validation import (
     normalize_metric_type,
@@ -54,6 +74,9 @@ from ui.components import (
     show_bayesian_results,
     show_data_quality,
     show_frequentist_results,
+    show_plan_verification,
+    show_preregistration,
+    show_readout_summary,
     show_srm_warning,
 )
 from ui.formatting import sidebar_tip
@@ -72,6 +95,19 @@ from ui.state import (
     MANUAL_CONVERSIONS_B,
     MANUAL_VISITORS_A,
     MANUAL_VISITORS_B,
+    POWER_ALPHA,
+    POWER_BASELINE_MEAN,
+    POWER_DAILY_NEW,
+    POWER_GUARDRAIL_BASELINE,
+    POWER_MATURATION,
+    POWER_MDE_ABS,
+    POWER_METRIC_LAYER,
+    POWER_POWER,
+    POWER_RAMP,
+    POWER_RHO,
+    POWER_SD,
+    POWER_UPLOAD,
+    PREREG_PLAN,
     RDD_UPLOAD,
     UPLOAD_KEYS,
     read_uploaded_dataframe,
@@ -276,11 +312,16 @@ def render_empty_state() -> None:
             },
             {
                 "label": "Signal 02",
+                "title": "Noise costs more than traffic.",
+                "body": "A jumpy metric needs far more users than a steady one. Use what people did before the test to quiet it down first.",
+            },
+            {
+                "label": "Signal 03",
                 "title": "Read risk, not just lift.",
                 "body": "Use significance and expected loss together so the loudest number does not get the final word.",
             },
             {
-                "label": "Signal 03",
+                "label": "Signal 04",
                 "title": "Audit the frame before the model maps it.",
                 "body": "Raw rows still need review. A valid column name is not the same thing as a valid analysis role.",
             },
@@ -403,11 +444,793 @@ def render_design_section() -> None:
     render_sensitivity_analysis(baseline, daily_traffic, weeks_required, split_ratio)
 
 
-def render_manual_section() -> None:
-    """Render Signal 02: manual counts analysis with frequentist and Bayesian reads."""
+def render_metric_layer_control() -> MetricLayer:
+    """Pick the metric layer and flag outcome definitions that break randomization."""
+    layer_left, layer_right = st.columns([2, 1])
+    layer: MetricLayer = layer_left.selectbox(
+        "What are you actually measuring?",
+        options=list(METRIC_LAYERS.keys()),
+        format_func=lambda key: {
+            "conversion": "Signed up or converted",
+            "activation": "Got far enough to use it",
+            "value_per_active": "Value per active user",
+            "value_per_randomised": "Value per user, counting the ones who did nothing",
+        }[key],
+        key=POWER_METRIC_LAYER,
+    )
+    filters_post_state = layer_right.checkbox(
+        "I only count users who did something first",
+        value=False,
+        key="power_post_filter",
+        help=(
+            "Tick this if the number only covers people who opened an account, funded, opted in, "
+            "or stayed active after the test started."
+        ),
+    )
+
+    status, explanation = post_treatment_risk(layer, filters_post_state)
+    if status == "fail":
+        st.error(explanation)
+    elif status == "caution":
+        st.warning(explanation)
+    else:
+        st.success(explanation)
+    return layer
+
+
+def render_continuous_sizing() -> tuple[float, float, float, float, float, int]:
+    """Size a continuous-outcome test and return the inputs the rest of the section needs."""
+    st.markdown(
+        "**How many users for a money metric.** Conversion rates are easy to size, because the "
+        "current rate tells you almost everything. Spend and revenue are harder: what matters is "
+        "how much people differ from each other. The trade is unforgiving in both directions. "
+        "Twice the spread costs four times the users. Twice the change you are chasing saves "
+        "three quarters of them."
+    )
+
+    size_left, size_right = st.columns(2)
+    sd = float(
+        size_left.number_input(
+            "How much users differ (standard deviation)",
+            min_value=0.01,
+            value=120.0,
+            step=1.0,
+            key=POWER_SD,
+            help=(
+                "Roughly how far a typical user sits from the average. Measure it over the same "
+                "time window and the same group of people you plan to test on."
+            ),
+        )
+    )
+    baseline_mean = float(
+        size_left.number_input(
+            "Current average (optional)",
+            min_value=0.0,
+            value=100.0,
+            step=1.0,
+            key=POWER_BASELINE_MEAN,
+            help="Only used to show the change you are chasing as a percentage.",
+        )
+    )
+    mde_absolute = float(
+        size_right.number_input(
+            "Smallest change worth acting on",
+            min_value=0.01,
+            value=4.0,
+            step=0.5,
+            key=POWER_MDE_ABS,
+            help=(
+                "The smallest change you would still do something about. Decide it from the "
+                "business case first. Working backwards from the traffic you happen to have is "
+                "how tests end up proving nothing."
+            ),
+        )
+    )
+    rho = float(
+        size_right.slider(
+            "How well past behaviour predicts the outcome (CUPED)",
+            min_value=0.0,
+            max_value=0.95,
+            value=0.0,
+            step=0.05,
+            key=POWER_RHO,
+            help=(
+                "If the people who spent a lot last month also spend a lot this month, you can "
+                "subtract that predictable part and shrink the noise. 0 means last month tells "
+                "you nothing. 0.8 means it tells you a great deal. Measure it below rather than "
+                "guessing at it."
+            ),
+        )
+    )
+
+    stance_left, stance_right = st.columns(2)
+    alpha = float(
+        stance_left.select_slider(
+            "How often you accept a false alarm (alpha)",
+            options=[0.01, 0.05, 0.10],
+            value=ALPHA,
+            key=POWER_ALPHA,
+        )
+    )
+    power = float(
+        stance_right.select_slider(
+            "Chance of spotting a real change (power)",
+            options=[0.70, 0.80, 0.90, 0.95],
+            value=0.80,
+            key=POWER_POWER,
+        )
+    )
+
+    split_ratio = float(st.session_state.get(MAIN_SPLIT, 50)) / 100
+    try:
+        size = sample_size_continuous(
+            sd=sd,
+            mde_absolute=mde_absolute,
+            baseline_mean=baseline_mean or None,
+            alpha=alpha,
+            power=power,
+            split_ratio=split_ratio,
+            rho=rho,
+        )
+    except ValueError as error:
+        st.error(str(error))
+        return sd, mde_absolute, rho, alpha, power, 0
+
+    unadjusted = sample_size_continuous(
+        sd=sd,
+        mde_absolute=mde_absolute,
+        alpha=alpha,
+        power=power,
+        split_ratio=split_ratio,
+    )["n_total"]
+
+    left, middle, right = st.columns(3)
+    left.metric("Users needed", f"{size['n_total']:,}")
+    middle.metric("Cost of an uneven split", f"{size['allocation_cost']:.2f}x")
+    right.metric(
+        "Users saved by using past behaviour",
+        f"{1 - size['variance_retained']:.0%}",
+        delta=f"-{unadjusted - size['n_total']:,} users" if rho > 0 else None,
+    )
+
+    if size["mde_relative"] is not None:
+        st.caption(
+            f"You are looking for a {size['mde_relative']:.1%} change against an average of "
+            f"{baseline_mean:,.2f}."
+        )
+    if split_ratio != 0.5:
+        st.caption(
+            f"The {split_ratio:.0%} split you set in Signal 01 needs "
+            f"{size['allocation_cost']:.2f}x as many users as an even one. The smaller group is "
+            "always the bottleneck, so the whole test is only as sharp as the thinner side. "
+            "Limited capacity or risk is a fair reason to do it. Habit is not."
+        )
+    return sd, mde_absolute, rho, alpha, power, size["n_total"]
+
+
+def render_duration_planner(n_total: int) -> DurationPlan:
+    """Translate a sample requirement into a calendar plan and return its parts."""
+    st.markdown(
+        "**From users needed to a date.** Dividing by daily traffic gets this wrong three ways. "
+        "Someone who already joined the test does not count twice when they come back. The last "
+        "person to join still needs the full measurement window before you can read their number. "
+        "And a cautious slow start is not part of the real test."
+    )
+    duration_left, duration_middle, duration_right = st.columns(3)
+    daily_new = float(
+        duration_left.number_input(
+            "New users joining the test per day",
+            min_value=1.0,
+            value=900.0,
+            step=50.0,
+            key=POWER_DAILY_NEW,
+            help=(
+                "People who qualify for the first time. Daily active users is the wrong number "
+                "here: most of them are already in the test."
+            ),
+        )
+    )
+    maturation = int(
+        duration_middle.number_input(
+            "Days you have to wait per user (measurement window)",
+            min_value=0,
+            value=30,
+            step=1,
+            key=POWER_MATURATION,
+            help=(
+                "If you are measuring 30-day spend, the last person to join still needs 30 days "
+                "before their number means anything."
+            ),
+        )
+    )
+    ramp = int(
+        duration_right.number_input(
+            "Days spent ramping up slowly first",
+            min_value=0,
+            value=0,
+            step=1,
+            key=POWER_RAMP,
+            help=(
+                "Showing the change to 10% first is a safety check for engineering. It is not "
+                "the test, and its data usually should not be pooled with it."
+            ),
+        )
+    )
+
+    if n_total <= 0:
+        return {
+            "ramp_days": ramp,
+            "enrolment_days": 0,
+            "maturation_days": maturation,
+            "total_days": ramp + maturation,
+            "enrolment_weeks": 0.0,
+            "binding_constraint": "Sizing inputs do not resolve yet.",
+        }
+
+    plan = plan_duration(
+        n_total=n_total,
+        daily_new_eligible=daily_new,
+        maturation_days=maturation,
+        ramp_days=ramp,
+    )
+    calendar_left, calendar_middle, calendar_right = st.columns(3)
+    calendar_left.metric("Signing users up", f"{plan['enrolment_days']} days")
+    calendar_middle.metric("Then waiting", f"{plan['maturation_days']} days")
+    calendar_right.metric("Total time", f"{plan['total_days']} days")
+    st.caption(f"What is actually holding you up: {plan['binding_constraint']}")
+    if ramp > 0:
+        st.caption(
+            "Keep people in whichever group they landed in, including through the ramp, and only "
+            "start counting once you are at the final split. If the odds of getting the new "
+            "version change from week to week, the two groups end up covering different weeks, "
+            "and you cannot tell the change apart from the calendar."
+        )
+    return plan
+
+
+def render_variance_and_simulation(sd: float, mde_absolute: float, alpha: float) -> None:
+    """Measure CUPED rho and empirical power from an uploaded historical column."""
+    st.markdown(
+        "**Measure the two numbers people usually guess.** Upload a sample of what real users "
+        "did before any of this: one column for the metric, and if you have it, a second column "
+        "for the same people in an earlier period."
+    )
+    st.file_uploader("Historical outcomes (CSV)", type="csv", key=POWER_UPLOAD)
+    frame = read_uploaded_dataframe(POWER_UPLOAD)
+    if frame is None:
+        st.info(
+            "Without a file, the numbers above rest on a textbook assumption about the shape of "
+            "your metric. On spend and revenue that assumption is usually the first thing to "
+            "break, because a handful of users carry most of the total."
+        )
+        return
+
+    numeric_columns = [column for column in frame.columns if pd.api.types.is_numeric_dtype(frame[column])]
+    if not numeric_columns:
+        st.error("No numeric columns found in that file.")
+        return
+
+    column_left, column_right = st.columns(2)
+    outcome_column = column_left.selectbox("Metric column", numeric_columns, key="power_outcome_col")
+    pre_column = column_right.selectbox(
+        "Same users, earlier period (optional)",
+        ["(none)", *numeric_columns],
+        key="power_pre_col",
+    )
+
+    outcome = frame[outcome_column]
+    if pre_column != "(none)":
+        try:
+            measured_rho = estimate_cuped_rho(frame[pre_column], outcome)
+        except ValueError as error:
+            st.warning(f"Could not estimate rho: {error}")
+        else:
+            st.success(
+                f"Past behaviour predicts this metric at {measured_rho:.2f}. Subtracting the "
+                f"predictable part cuts the users you need by {1 - (1 - measured_rho**2):.0%}. "
+                "Set the CUPED slider above to this number to count it in."
+            )
+
+    try:
+        diagnostics = skew_diagnostics(outcome)
+    except ValueError as error:
+        st.error(str(error))
+        return
+
+    skew_left, skew_middle, skew_right = st.columns(3)
+    skew_left.metric("Lopsidedness", f"{diagnostics['skewness']:.2f}")
+    skew_middle.metric("Held by the top 1%", f"{diagnostics['share_in_top_1_pct']:.0%}")
+    skew_right.metric("Users at zero", f"{diagnostics['zero_share']:.0%}")
+    st.caption(
+        f"The more lopsided the metric, the more users the standard maths needs before it "
+        f"behaves. For this one that is roughly {diagnostics['n_for_clt']:,} per group (the "
+        "25 x skewness squared rule from Boos and Hughes-Oliver). Below that, run the "
+        "simulation instead of trusting the formula."
+    )
+
+    simulate_left, simulate_right = st.columns(2)
+    sim_n = int(
+        simulate_left.number_input(
+            "Users per group to try",
+            min_value=100,
+            value=5000,
+            step=500,
+            key="power_sim_n",
+        )
+    )
+    sim_lift = (
+        simulate_right.number_input(
+            "Change you want to catch (%)",
+            min_value=0.1,
+            value=max(0.1, round(100 * mde_absolute / max(float(outcome.mean()), 1e-9), 1)),
+            step=0.5,
+            key="power_sim_lift",
+        )
+        / 100
+    )
+    winsorise = st.checkbox(
+        "Cap the top 1% of users",
+        value=False,
+        key="power_sim_winsorise",
+        help=(
+            "Trimming the biggest spenders makes results look tidier. It is only honest if you "
+            "decide it now and write it down. Deciding it after you see the result is how people "
+            "talk themselves into a win."
+        ),
+    )
+
+    if st.button("Try this experiment 300 times", key="power_simulate_button"):
+        with st.spinner("Running it on real users, over and over..."):
+            result = simulate_power(
+                values=outcome,
+                relative_lift=sim_lift,
+                n_per_arm=sim_n,
+                alpha=alpha,
+                iterations=300,
+                winsorise_quantile=0.99 if winsorise else None,
+            )
+        power_left, power_right = st.columns(2)
+        power_left.metric("Times it found the change", f"{result['power']:.0%}")
+        power_right.metric("False alarms when nothing changed", f"{result['false_positive_rate']:.1%}")
+        if not result["calibrated"]:
+            st.error(
+                f"Run on data where nothing changed at all, this test still declared a winner "
+                f"{result['false_positive_rate']:.1%} of the time, against the {alpha:.0%} you "
+                "asked for. On a metric this shape the maths is not behaving, so the user counts "
+                "above are not trustworthy either."
+            )
+        elif result["power"] < 0.80:
+            st.warning(
+                f"With {sim_n:,} users per group, this test only spots the change "
+                f"{result['power']:.0%} of the time. The textbook estimate above assumes a "
+                "tidier metric than yours. Add users, quiet the noise, or look for a bigger "
+                "change."
+            )
+        else:
+            st.success(
+                f"With {sim_n:,} users per group, this test spots the change "
+                f"{result['power']:.0%} of the time, and only cries wolf "
+                f"{result['false_positive_rate']:.1%} of the time when nothing is there."
+            )
+        st.caption(
+            f"You typed {sd:,.2f} for how much users differ. This run used the real spread in "
+            "your file instead, so when the two disagree, believe this one."
+        )
+
+
+def render_intensity_and_compliance(sd: float, alpha: float, power: float) -> None:
+    """Price treatment doses, then separate ITT from the complier effect."""
+    st.markdown(
+        "**How strong to make the change.** A bolder version usually moves the metric more, and a "
+        "bigger effect needs far fewer users, so going bolder buys you time cheaply. Only up to a "
+        "point. Doubling an incentive rarely doubles the response, while it does double the bill. "
+        "And testing a version you would never actually ship answers a question nobody asked."
+    )
+    baseline_mean = float(st.session_state.get(POWER_BASELINE_MEAN, 100.0))
+    daily_new = float(st.session_state.get(POWER_DAILY_NEW, 900.0))
+    maturation = int(st.session_state.get(POWER_MATURATION, 30))
+    rho = float(st.session_state.get(POWER_RHO, 0.0))
+    split_ratio = float(st.session_state.get(MAIN_SPLIT, 50)) / 100
+
+    dose_left, dose_middle, dose_right = st.columns(3)
+    weak = dose_left.number_input("Mild version moves it (%)", 0.1, 100.0, 2.0, 0.1, key="power_dose_weak") / 100
+    mid = dose_middle.number_input("Medium version moves it (%)", 0.1, 100.0, 4.0, 0.1, key="power_dose_mid") / 100
+    strong = dose_right.number_input("Bold version moves it (%)", 0.1, 100.0, 5.0, 0.1, key="power_dose_strong") / 100
+
+    try:
+        options = intensity_options(
+            doses=[("Weak", weak), ("Medium", mid), ("Strong", strong)],
+            baseline=baseline_mean,
+            sd=sd,
+            daily_new_eligible=daily_new,
+            maturation_days=maturation,
+            alpha=alpha,
+            power=power,
+            split_ratio=split_ratio,
+            rho=rho,
+        )
+    except ValueError as error:
+        st.error(str(error))
+    else:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Version": option["label"],
+                        "Expected change": f"{option['expected_effect']:.1%}",
+                        "Users needed": f"{option['n_total']:,}",
+                        "Days": option["total_days"],
+                        "Days saved vs the mild one": option["days_saved_vs_weakest"],
+                        "Days saved per extra point of effect": (
+                            f"{option['marginal_days_per_effect_point']:.1f}"
+                            if option["marginal_days_per_effect_point"] is not None
+                            else "-"
+                        ),
+                    }
+                    for option in options
+                ]
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+        st.caption(
+            "Watch the last column drop. Once each extra point of effect stops buying you many "
+            "days, a bolder version is mostly buying you cost."
+        )
+
+    st.divider()
+    st.markdown(
+        "**When people have to opt in.** Users are split into groups the moment they qualify. "
+        "Whether they then take the offer is their choice, and the offer itself pushes that "
+        "choice. So the people who opt in are not a random group any more, and comparing them "
+        "with the people who did not tells you who was keen, not what your change did. "
+        "The number that answers the shipping decision counts everyone who was offered it, "
+        "whether they took it or not."
+    )
+    itt_left, itt_middle, itt_right = st.columns(3)
+    itt = itt_left.number_input(
+        "Effect across everyone offered it",
+        value=0.012,
+        step=0.001,
+        format="%.4f",
+        key="power_itt",
+        help="Known as the intention-to-treat effect, or ITT.",
+    )
+    itt_se = itt_middle.number_input(
+        "How uncertain that number is (standard error)",
+        min_value=0.0,
+        value=0.004,
+        step=0.001,
+        format="%.4f",
+        key="power_itt_se",
+    )
+    take_up = itt_right.slider("Share who actually took it", 0.0, 1.0, 0.35, 0.05, key="power_take_up")
+
+    compliance = compliance_effects(
+        itt=float(itt),
+        itt_standard_error=float(itt_se),
+        take_up_treatment=float(take_up),
+        alpha=alpha,
+    )
+    itt_low, itt_high = compliance["itt_ci"]
+    st.info(
+        f"Across everyone offered it: {compliance['itt']:+.4f}, somewhere between "
+        f"{itt_low:+.4f} and {itt_high:+.4f}. This is the number that answers what happens if "
+        "you ship it, because after launch you also get the people who ignore it."
+    )
+    if compliance["cace"] is not None and compliance["cace_ci"] is not None:
+        cace_low, cace_high = compliance["cace_ci"]
+        st.caption(
+            f"Among the people who actually took it, the effect works out at "
+            f"{compliance['cace']:+.4f}, somewhere between {cace_low:+.4f} and {cace_high:+.4f}. "
+            f"{compliance['estimand_note']}"
+        )
+    else:
+        st.caption(compliance["estimand_note"])
+
+
+def render_plan_lock(alpha: float, power: float, rho: float, duration: DurationPlan) -> None:
+    """Freeze the design decisions so the readout can verify them later."""
+    baseline = float(st.session_state.get(MAIN_BASELINE, 10.0)) / 100
+    mde_relative = float(st.session_state.get(MAIN_MDE, 10.0)) / 100
+    split_ratio = float(st.session_state.get(MAIN_SPLIT, 50)) / 100
+    layer: MetricLayer = st.session_state.get(POWER_METRIC_LAYER, "conversion")
+
+    st.markdown(
+        "**Write the plan down.** A plan is only worth writing if something later checks that you "
+        "stuck to it. Once you lock this, the two readout sections below compare what you promised "
+        "against what you actually got. The two lines people quietly change once the results are "
+        "in are how the metric was trimmed and how many metrics counted as the main one, so both "
+        "are recorded here."
+    )
+    lock_left, lock_right = st.columns(2)
+    metric_name = lock_left.text_input("The metric this test is about", value="Checkout conversion", key="prereg_metric")
+    transform = lock_right.selectbox(
+        "How the metric is trimmed",
+        ["none", "winsorise p99", "winsorise p95", "log"],
+        key="prereg_transform",
+    )
+    metrics_left, looks_right = st.columns(2)
+    n_primary = int(metrics_left.number_input("How many metrics count as the main one", 1, 10, 1, key="prereg_n_primary"))
+    planned_looks = int(looks_right.number_input("How many times you plan to check early", 1, 20, 1, key="prereg_looks"))
+    guardrail_baseline = (
+        st.number_input(
+            "Rate of the thing you must not break (%), such as failed payments",
+            min_value=0.0,
+            max_value=99.0,
+            value=0.2,
+            step=0.1,
+            key=POWER_GUARDRAIL_BASELINE,
+        )
+        / 100
+    )
+    decision_rule = st.text_input(
+        "What you agree in advance to do with the result",
+        value=(
+            "Ship if even the pessimistic end of the range beats the bar we set, and nothing we "
+            "said we must not break has moved."
+        ),
+        key="prereg_rule",
+    )
+
+    rate_sd = float(np.sqrt(baseline * (1 - baseline)))
+    plan_n = sample_size_continuous(
+        sd=rate_sd,
+        mde_absolute=baseline * mde_relative,
+        alpha=alpha,
+        power=power,
+        split_ratio=split_ratio,
+        rho=rho,
+    )["n_total"]
+    plan_duration_parts = plan_duration(
+        n_total=plan_n,
+        daily_new_eligible=float(st.session_state.get(POWER_DAILY_NEW, 900.0)),
+        maturation_days=duration["maturation_days"],
+        ramp_days=duration["ramp_days"],
+    )
+
+    if guardrail_baseline > 0:
+        harm = guardrail_detectable_harm(
+            baseline_rate=guardrail_baseline,
+            n_total=plan_n,
+            split_ratio=split_ratio,
+            alpha=alpha,
+            power=power,
+        )
+        tone = st.warning if harm > 0.10 else st.info
+        tone(
+            f"At {plan_n:,} users, something that happens {guardrail_baseline:.2%} of the time "
+            f"would have to get {harm:.0%} worse before this test noticed. Anything smaller than "
+            "that will look untouched whether it was or not, so read a clean guardrail as "
+            "'we could not see a problem', not 'there was none'."
+        )
+
+    st.caption(
+        f"Recalculated with the settings you chose above: {plan_n:,} users over "
+        f"{plan_duration_parts['total_days']} days, at a {alpha:.2f} false-alarm rate, "
+        f"{power:.0%} chance of spotting the change, a {split_ratio:.0%} split, and past "
+        f"behaviour predicting the outcome at {rho:.2f}."
+    )
+
+    if st.button("Lock this as the pre-registered plan", key="prereg_lock_button"):
+        st.session_state[PREREG_PLAN] = build_preregistration(
+            primary_metric=metric_name,
+            metric_layer=layer,
+            baseline=baseline,
+            mde_relative=mde_relative,
+            n_total=plan_n,
+            ramp_days=plan_duration_parts["ramp_days"],
+            enrolment_days=plan_duration_parts["enrolment_days"],
+            maturation_days=plan_duration_parts["maturation_days"],
+            daily_new_eligible=float(st.session_state.get(POWER_DAILY_NEW, 900.0)),
+            split_ratio=split_ratio,
+            rho=rho,
+            alpha=alpha,
+            power=power,
+            transform=transform,
+            n_primary_metrics=n_primary,
+            planned_looks=planned_looks,
+            guardrail_baseline=guardrail_baseline or None,
+            decision_rule=decision_rule,
+        )
+        st.success(
+            "Plan saved. Signals 03 and 04 will now hold the result up against it before showing "
+            "you the lift."
+        )
+
+    locked = st.session_state.get(PREREG_PLAN)
+    if locked is not None:
+        show_preregistration(locked)
+
+
+def render_power_section() -> None:
+    """Render Signal 02: variance, duration, compliance, and the pre-registered plan."""
     render_section_rule()
     render_signal_header(
         "Signal 02",
+        "Work out what the test can see, and what it will cost you.",
+        "How many users you need comes down to three things: how jumpy the metric is, how small a change you would still act on, and how long you can wait for it. Get those on the table before anyone picks a launch date.",
+    )
+    render_section_note(
+        "How many users, and by when",
+        "Most tests that answer nothing were not short of traffic. They measured the wrong thing, or measured it on the wrong group of people.",
+    )
+
+    layer = render_metric_layer_control()
+    st.caption(METRIC_LAYERS[layer])
+
+    with st.expander("How many users do I need?", expanded=True):
+        sd, mde_absolute, rho, alpha, power, n_total = render_continuous_sizing()
+
+    with st.expander("How long will that take?"):
+        duration = render_duration_planner(n_total)
+
+    with st.expander("Check it against real data"):
+        render_variance_and_simulation(sd, mde_absolute, alpha)
+
+    with st.expander("How bold to go, and who actually takes it"):
+        render_intensity_and_compliance(sd, alpha, power)
+
+    with st.expander("Write the plan down", expanded=True):
+        render_plan_lock(alpha, power, rho, duration)
+
+
+class PlanAttestations(TypedDict):
+    """Facts about the run that only the analyst can supply."""
+
+    actual_days: int | None
+    transform_applied: str
+    analysed_as_itt: bool
+    looks_taken: int
+    population_size: int | None
+    value_per_unit: float | None
+
+
+def render_plan_attestations(key_prefix: str) -> PlanAttestations:
+    """Collect the facts only the analyst knows, before the readout is computed."""
+    plan = st.session_state.get(PREREG_PLAN)
+    if plan is None:
+        st.info(
+            "No plan saved yet. Write one down in Signal 02 and this section will check what you "
+            "actually got against what you promised: users, split, who was counted, how the "
+            "metric was trimmed, and how often you looked."
+        )
+        return {
+            "actual_days": None,
+            "transform_applied": "none",
+            "analysed_as_itt": True,
+            "looks_taken": 1,
+            "population_size": None,
+            "value_per_unit": None,
+        }
+
+    show_preregistration(plan)
+    attest_left, attest_middle, attest_right = st.columns(3)
+    actual_days = int(
+        attest_left.number_input(
+            "Days it actually ran",
+            min_value=0,
+            value=int(plan["total_days"]),
+            step=1,
+            key=f"{key_prefix}_actual_days",
+        )
+    )
+    transform_applied = attest_middle.selectbox(
+        "How the metric was actually trimmed",
+        ["none", "winsorise p99", "winsorise p95", "log"],
+        index=["none", "winsorise p99", "winsorise p95", "log"].index(plan["transform"]),
+        key=f"{key_prefix}_actual_transform",
+    )
+    looks_taken = int(
+        attest_right.number_input(
+            "Times you actually looked at the result",
+            min_value=1,
+            value=int(plan["planned_looks"]),
+            step=1,
+            key=f"{key_prefix}_actual_looks",
+        )
+    )
+    analysed_as_itt = st.checkbox(
+        "Everyone who entered the test is in these numbers, in the group they were put in",
+        value=True,
+        key=f"{key_prefix}_itt",
+        help=(
+            "Untick if the numbers only cover people who opted in, finished, or did something "
+            "else after the test started."
+        ),
+    )
+
+    impact_left, impact_right = st.columns(2)
+    population_size = int(
+        impact_left.number_input(
+            "How many users a full rollout would reach",
+            min_value=0,
+            value=0,
+            step=1000,
+            key=f"{key_prefix}_population",
+            help="Leave at zero to skip the money estimate.",
+        )
+    )
+    value_per_unit = float(
+        impact_right.number_input(
+            "What one conversion is worth",
+            min_value=0.0,
+            value=0.0,
+            step=1.0,
+            key=f"{key_prefix}_unit_value",
+        )
+    )
+
+    return {
+        "actual_days": actual_days,
+        "transform_applied": transform_applied,
+        "analysed_as_itt": analysed_as_itt,
+        "looks_taken": looks_taken,
+        "population_size": population_size or None,
+        "value_per_unit": value_per_unit or None,
+    }
+
+
+def render_plan_check(
+    n_control: int,
+    n_treatment: int,
+    baseline_rate: float,
+    observed_rate: float,
+    ci_relative: tuple[float, float],
+    metrics_tested: int,
+    attestations: PlanAttestations,
+) -> None:
+    """Verify the delivered experiment against the locked plan, then state the result."""
+    plan: PreRegistration | None = st.session_state.get(PREREG_PLAN)
+    if plan is None:
+        return
+
+    actual_days = attestations["actual_days"]
+    total_n = n_control + n_treatment
+    rows = verify_against_plan(
+        plan=plan,
+        actual_n_total=total_n,
+        actual_split_ratio=n_treatment / total_n if total_n else 0.0,
+        actual_days=actual_days,
+        metrics_tested=metrics_tested,
+        looks_taken=attestations["looks_taken"],
+        transform_applied=attestations["transform_applied"],
+        analysed_as_itt=attestations["analysed_as_itt"],
+        maturation_complete=actual_days is None or actual_days >= plan["total_days"],
+    )
+    st.markdown("### What you promised, and what you got")
+    show_plan_verification(rows)
+
+    if baseline_rate <= 0:
+        st.caption(
+            "The control group averages zero or less, so a percentage change does not mean "
+            "anything here. The plan check above still holds."
+        )
+        return
+
+    st.markdown("### The result, in the order that matters")
+    show_readout_summary(
+        summarise_readout(
+            baseline=baseline_rate,
+            observed_rate_or_mean=observed_rate,
+            ci_relative=ci_relative,
+            mde_relative=plan["mde_relative"],
+            population_size=attestations["population_size"],
+            value_per_unit=attestations["value_per_unit"],
+        )
+    )
+    st.caption(
+        "A p-value only answers whether luck alone could have produced this. The decision needs "
+        "the range above, held up against the smallest change you said was worth acting on. That "
+        "is why the number you wrote down in Signal 02 is carried all the way through to here."
+    )
+
+
+def render_manual_section() -> None:
+    """Render Signal 03: manual counts analysis with frequentist and Bayesian reads."""
+    render_section_rule()
+    render_signal_header(
+        "Signal 03",
         "Read the result with the assumptions still visible.",
         "This section is for the quick decision pass when all you have are counts. It keeps significance, expected loss, and structural caveats in the same field of view.",
     )
@@ -427,6 +1250,9 @@ def render_manual_section() -> None:
         manual_n_comparisons, manual_peeked_early = render_frequentist_guardrail_controls("manual")
     else:
         manual_n_comparisons, manual_peeked_early = 1, False
+
+    with st.expander("Check this readout against the pre-registered plan"):
+        manual_attestations = render_plan_attestations("manual")
 
     manual_left, manual_right = st.columns(2)
     with manual_left:
@@ -507,12 +1333,23 @@ def render_manual_section() -> None:
                     expected_loss=manual_bayes["expected_loss"],
                 )
 
+            manual_ci = confidence_interval_binary(cr_a, cr_b, visitors_a, visitors_b)
+            render_plan_check(
+                n_control=visitors_a,
+                n_treatment=visitors_b,
+                baseline_rate=cr_a,
+                observed_rate=cr_b,
+                ci_relative=manual_ci,
+                metrics_tested=manual_n_comparisons,
+                attestations=manual_attestations,
+            )
+
 
 def render_csv_section() -> None:
-    """Render Signal 03: raw CSV audit with LLM-assisted column mapping."""
+    """Render Signal 04: raw CSV audit with LLM-assisted column mapping."""
     render_section_rule()
     render_signal_header(
-        "Signal 03",
+        "Signal 04",
         "Audit the raw rows before the mapped columns start telling the story.",
         "This section is for the cases where summary counts are not enough. Review the raw dataframe, then let the tool propose a mapping and run the test.",
     )
@@ -532,6 +1369,9 @@ def render_csv_section() -> None:
         csv_n_comparisons, csv_peeked_early = render_frequentist_guardrail_controls("csv")
     else:
         csv_n_comparisons, csv_peeked_early = 1, False
+
+    with st.expander("Check this readout against the pre-registered plan"):
+        csv_attestations = render_plan_attestations("csv")
 
     uploaded_file = st.file_uploader("Upload a results CSV", type="csv", key=CSV_UPLOAD)
 
@@ -684,6 +1524,16 @@ def render_csv_section() -> None:
                         else:
                             st.info("Bayesian analysis is only available for binary metrics.")
 
+                    render_plan_check(
+                        n_control=n_a,
+                        n_treatment=n_b,
+                        baseline_rate=float(mean_a),
+                        observed_rate=float(mean_b),
+                        ci_relative=(ci_lower, ci_upper),
+                        metrics_tested=csv_n_comparisons,
+                        attestations=csv_attestations,
+                    )
+
                 except Exception as exc:
                     logger.warning("CSV analysis failed: %s", exc)
                     st.error(f"Analysis failed: {exc}")
@@ -720,10 +1570,10 @@ def render_csv_section() -> None:
 
 
 def render_causal_section() -> None:
-    """Render Signal 04: causal fallback method selector and analysis."""
+    """Render Signal 05: causal fallback method selector and analysis."""
     render_section_rule()
     render_signal_header(
-        "Signal 04",
+        "Signal 05",
         "Choose the causal fallback when randomization is weak or gone.",
         "This section is deliberately skeptical. It does not ask which method sounds advanced. It asks which assumption you are actually willing to defend.",
     )
@@ -1054,6 +1904,7 @@ if not any(
     render_empty_state()
 
 render_design_section()
+render_power_section()
 render_manual_section()
 render_csv_section()
 render_causal_section()
