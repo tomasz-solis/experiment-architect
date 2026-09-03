@@ -13,6 +13,7 @@ from config import (
     Z_ALPHA,
     Z_BETA,
 )
+from stats.power import allocation_cost
 
 # Pooled SD assumes equal variances (classic Cohen's d). The averaged-SD form,
 # sqrt((var_a + var_b) / 2), is the variance structure Welch's test itself uses,
@@ -352,7 +353,9 @@ def calculate_sample_size(
 
     split_penalty = 0
     if split_ratio != 0.5:
-        split_penalty = int(((split_factor / 4) - 1) * 100)
+        # Same multiplier as stats.power.allocation_cost, expressed as a percentage
+        # of extra sample the uneven split costs relative to 50/50.
+        split_penalty = int((allocation_cost(split_ratio) - 1) * 100)
 
     return {
         "n_total": int(np.ceil(n_total)),

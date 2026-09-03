@@ -15,6 +15,10 @@ from typing import Literal
 Z_ALPHA = 1.96  # two-sided 95%, equivalent to norm.ppf(0.975)
 Z_BETA = 0.84  # 80% power, equivalent to norm.ppf(0.80)
 ALPHA = 0.05  # two-sided significance threshold
+# Power as a probability, for the planning functions in stats/power.py that let
+# the caller vary it. Kept paired with Z_BETA above: 0.80 is the convention, not
+# a law, and an expensive irreversible launch deserves 0.90.
+DEFAULT_POWER = 0.80
 
 # Bayesian sampling
 # The posterior win probability and expected loss are estimated by Monte Carlo.
