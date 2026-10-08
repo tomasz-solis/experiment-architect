@@ -26,6 +26,7 @@ LENSES = [
     "Causal fallback",
 ]
 
+APP_PATH = str(Path(__file__).resolve().parent.parent / "app.py")
 SAMPLE_CSV_PATH = Path(__file__).resolve().parent.parent / "examples" / "sample_ab_test.csv"
 SAMPLE_CSV_BYTES = SAMPLE_CSV_PATH.read_bytes()
 
@@ -98,7 +99,7 @@ class FakeMappingResponses:
 @pytest.fixture
 def app() -> AppTest:
     """Run the app once with no datasets uploaded (AI features disabled)."""
-    return AppTest.from_file("app.py", default_timeout=60).run()
+    return AppTest.from_file(APP_PATH, default_timeout=60).run()
 
 
 @pytest.fixture
@@ -112,7 +113,7 @@ def ai_app(monkeypatch: pytest.MonkeyPatch) -> tuple[AppTest, FakeMappingRespons
     fake_responses = FakeMappingResponses()
     monkeypatch.setattr("llm.client.create_llm_client", lambda: (object(), True, "openai"))
     monkeypatch.setattr("llm.client.ask_agent_json", fake_responses)
-    app_test = AppTest.from_file("app.py", default_timeout=60).run()
+    app_test = AppTest.from_file(APP_PATH, default_timeout=60).run()
     return app_test, fake_responses
 
 
