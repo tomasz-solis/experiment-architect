@@ -6,12 +6,48 @@ import pandas as pd
 import pytest
 
 from stats.validation import (
+    check_analysis_unit,
+    dropped_rows_by_arm,
+    guess_mapping,
     normalize_metric_type,
     prepare_ab_test_frame,
     prepare_did_frame,
     prepare_rdd_frame,
+    resolve_control_group,
     validate_mapping_columns,
 )
+
+
+class TestDroppedRowsByArm:
+    """Coverage for per-arm attrition counts between raw and cleaned frames."""
+
+    def test_counts_dropped_rows_per_arm(self) -> None:
+        original = pd.DataFrame(
+            {
+                "variant": ["A", "A", "A", "B", "B", "B"],
+                "converted": [1, None, 0, 1, None, None],
+            }
+        )
+        cleaned, _ = prepare_ab_test_frame(original, "variant", "converted", "binary")
+        counts = dropped_rows_by_arm(original, cleaned, "variant")
+        assert counts == {"A": 1, "B": 2}
+
+    def test_no_drops_reports_zero_for_every_arm(self) -> None:
+        original = pd.DataFrame({"variant": ["A", "A", "B", "B"], "converted": [1, 0, 1, 0]})
+        cleaned, _ = prepare_ab_test_frame(original, "variant", "converted", "binary")
+        counts = dropped_rows_by_arm(original, cleaned, "variant")
+        assert counts == {"A": 0, "B": 0}
+
+    def test_rows_with_missing_variant_are_not_attributed_to_an_arm(self) -> None:
+        original = pd.DataFrame(
+            {
+                "variant": ["A", "A", None, "B", "B"],
+                "converted": [1, 0, 1, 1, 0],
+            }
+        )
+        cleaned, _ = prepare_ab_test_frame(original, "variant", "converted", "binary")
+        counts = dropped_rows_by_arm(original, cleaned, "variant")
+        assert counts == {"A": 0, "B": 0}
 
 
 class TestValidateMappingColumns:
@@ -207,6 +243,101 @@ class TestPrepareRddFrame:
             prepare_rdd_frame(df, "score", "treated", "outcome")
 
 
+class TestCheckAnalysisUnit:
+    """One row per randomised unit, or the tests below overstate significance."""
+
+    def test_one_row_per_unit_is_not_clustered(self) -> None:
+        df = pd.DataFrame({"user_id": range(100)})
+        result = check_analysis_unit(df, "user_id")
+        assert result["rows"] == 100
+        assert result["units"] == 100
+        assert result["rows_per_unit"] == pytest.approx(1.0)
+        assert not result["is_clustered"]
+
+    def test_exactly_at_the_tolerance_threshold_is_not_clustered(self) -> None:
+        """20 units, 21 rows: exactly 1.05 rows per unit, the tolerance boundary itself."""
+        df = pd.DataFrame({"user_id": [*range(20), 0]})
+        result = check_analysis_unit(df, "user_id")
+        assert result["rows_per_unit"] == pytest.approx(1.05)
+        assert not result["is_clustered"]
+
+    def test_above_the_threshold_is_clustered(self) -> None:
+        df = pd.DataFrame({"user_id": [*range(20), 0, 1]})
+        result = check_analysis_unit(df, "user_id")
+        assert result["rows_per_unit"] == pytest.approx(1.1)
+        assert result["is_clustered"]
+
+    def test_ignores_missing_unit_values_when_counting_units(self) -> None:
+        df = pd.DataFrame({"user_id": [1, 1, 2, None]})
+        result = check_analysis_unit(df, "user_id")
+        assert result["units"] == 2
+
+    def test_rejects_a_missing_column(self) -> None:
+        df = pd.DataFrame({"user_id": [1, 2, 3]})
+        with pytest.raises(ValueError, match="not found"):
+            check_analysis_unit(df, "missing_col")
+
+    def test_rejects_an_empty_dataframe(self) -> None:
+        df = pd.DataFrame({"user_id": pd.Series([], dtype="int64")})
+        with pytest.raises(ValueError, match="no rows"):
+            check_analysis_unit(df, "user_id")
+
+    def test_rejects_a_column_with_only_missing_values(self) -> None:
+        df = pd.DataFrame({"user_id": [None, None, None]})
+        with pytest.raises(ValueError, match="no non-missing values"):
+            check_analysis_unit(df, "user_id")
+
+
+class TestResolveControlGroup:
+    """Coverage for deterministic control/variant resolution, independent of row order."""
+
+    def test_recognises_named_control_aliases(self) -> None:
+        assert resolve_control_group(["treatment", "control"]) == ("control", "treatment")
+
+    def test_recognises_single_letter_a_as_control(self) -> None:
+        assert resolve_control_group(["B", "A"]) == ("A", "B")
+
+    def test_recognises_zero_as_control(self) -> None:
+        assert resolve_control_group(["1", "0"]) == ("0", "1")
+
+    def test_recognises_off_as_control(self) -> None:
+        assert resolve_control_group(["on", "off"]) == ("off", "on")
+
+    def test_recognises_baseline_as_control(self) -> None:
+        assert resolve_control_group(["new_flow", "baseline"]) == ("baseline", "new_flow")
+
+    def test_recognises_old_as_control(self) -> None:
+        assert resolve_control_group(["new", "old"]) == ("old", "new")
+
+    def test_recognises_existing_as_control(self) -> None:
+        assert resolve_control_group(["redesign", "existing"]) == ("existing", "redesign")
+
+    def test_alias_matching_ignores_case_and_separators(self) -> None:
+        """"Control-Group" style labels normalise the same as "control"."""
+        assert resolve_control_group(["Variant_B", "Control-Group"]) == (
+            "Control-Group",
+            "Variant_B",
+        )
+
+    def test_falls_back_to_sorted_order_when_no_alias_matches(self) -> None:
+        assert resolve_control_group(["blue", "green"]) == ("blue", "green")
+        assert resolve_control_group(["green", "blue"]) == ("blue", "green")
+
+    def test_row_order_never_decides_control_when_no_alias_matches(self) -> None:
+        """Whichever value appears first in the file must not change the outcome."""
+        assert resolve_control_group(["zebra", "apple"]) == resolve_control_group(
+            ["apple", "zebra"]
+        )
+
+    def test_rejects_more_than_two_distinct_values(self) -> None:
+        with pytest.raises(ValueError, match="exactly 2 distinct values"):
+            resolve_control_group(["A", "B", "C"])
+
+    def test_rejects_a_single_distinct_value(self) -> None:
+        with pytest.raises(ValueError, match="exactly 2 distinct values"):
+            resolve_control_group(["A", "A"])
+
+
 class TestNormalizeMetricType:
     def test_is_case_insensitive(self) -> None:
         assert normalize_metric_type("BiNaRy") == "binary"
@@ -217,3 +348,35 @@ class TestNormalizeMetricType:
     def test_rejects_unknown_type(self) -> None:
         with pytest.raises(ValueError, match="binary"):
             normalize_metric_type("ordinal")
+
+
+class TestGuessMapping:
+    """Coverage for the no-model default guess behind the CSV mapping widgets."""
+
+    def test_maps_the_bundled_sample_csv(self) -> None:
+        assert guess_mapping(["user_id", "variant", "converted", "revenue"]) == {
+            "variant_col": "variant",
+            "metric_col": "converted",
+        }
+
+    def test_is_case_insensitive_and_ignores_separators(self) -> None:
+        assert guess_mapping(["Test_Group", "Conversion"]) == {
+            "variant_col": "Test_Group",
+            "metric_col": "Conversion",
+        }
+
+    def test_recognises_other_candidate_names(self) -> None:
+        assert guess_mapping(["arm", "outcome"]) == {
+            "variant_col": "arm",
+            "metric_col": "outcome",
+        }
+
+    def test_never_maps_both_roles_to_the_same_column_first_match_wins(self) -> None:
+        guess = guess_mapping(["converted", "revenue"])
+        assert guess == {"metric_col": "converted"}
+
+    def test_returns_only_the_keys_it_is_confident_about(self) -> None:
+        assert guess_mapping(["user_id", "timestamp"]) == {}
+
+    def test_returns_partial_guess_when_only_one_role_matches(self) -> None:
+        assert guess_mapping(["user_id", "group"]) == {"variant_col": "group"}

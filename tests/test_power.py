@@ -8,6 +8,7 @@ from stats.power import (
     allocation_cost,
     compliance_effects,
     cuped_variance_retained,
+    design_effect,
     estimate_cuped_rho,
     guardrail_detectable_harm,
     intensity_options,
@@ -83,6 +84,51 @@ class TestContinuousSampleSize:
         with pytest.raises(ValueError):
             sample_size_continuous(sd=1.0, mde_absolute=0.0)
 
+    def test_cluster_design_effect_multiplies_the_total_proportionally(self) -> None:
+        """A randomised-by-group test needs the design effect's multiple of the
+        independent-unit sample, not just a vaguely larger one."""
+        base = sample_size_continuous(sd=1.0, mde_absolute=0.2)
+        clustered = sample_size_continuous(sd=1.0, mde_absolute=0.2, cluster_design_effect=1.45)
+        assert clustered["n_total"] == pytest.approx(base["n_total"] * 1.45, rel=0.01)
+        assert clustered["design_effect"] == pytest.approx(1.45)
+
+    def test_default_design_effect_is_a_no_op(self) -> None:
+        result = sample_size_continuous(sd=1.0, mde_absolute=0.2)
+        assert result["design_effect"] == pytest.approx(1.0)
+
+    def test_rejects_a_design_effect_below_one(self) -> None:
+        with pytest.raises(ValueError):
+            sample_size_continuous(sd=1.0, mde_absolute=0.2, cluster_design_effect=0.9)
+
+
+class TestDesignEffect:
+    """The Kish design effect: how much a group-randomised sample costs."""
+
+    def test_matches_hand_computed_value(self) -> None:
+        # A group of 10 at ICC 0.05: 1 + (10 - 1) * 0.05 = 1.45.
+        assert design_effect(average_cluster_size=10, intracluster_correlation=0.05) == pytest.approx(1.45)
+
+    def test_a_group_of_one_is_a_no_op_regardless_of_icc(self) -> None:
+        assert design_effect(average_cluster_size=1, intracluster_correlation=0.8) == pytest.approx(1.0)
+
+    def test_zero_icc_is_a_no_op_regardless_of_group_size(self) -> None:
+        assert design_effect(average_cluster_size=50, intracluster_correlation=0.0) == pytest.approx(1.0)
+
+    def test_larger_groups_cost_more(self) -> None:
+        small = design_effect(average_cluster_size=5, intracluster_correlation=0.1)
+        large = design_effect(average_cluster_size=50, intracluster_correlation=0.1)
+        assert large > small
+
+    def test_rejects_a_cluster_size_below_one(self) -> None:
+        with pytest.raises(ValueError):
+            design_effect(average_cluster_size=0.5, intracluster_correlation=0.1)
+
+    def test_rejects_an_icc_outside_zero_one(self) -> None:
+        with pytest.raises(ValueError):
+            design_effect(average_cluster_size=10, intracluster_correlation=1.5)
+        with pytest.raises(ValueError):
+            design_effect(average_cluster_size=10, intracluster_correlation=-0.1)
+
 
 class TestReverseMDE:
     """The inverse direction, which is the honest one when traffic is fixed."""
@@ -101,6 +147,18 @@ class TestReverseMDE:
         plain = mde_from_sample_continuous(sd=1.0, n_total=10_000)
         adjusted = mde_from_sample_continuous(sd=1.0, n_total=10_000, rho=0.6)
         assert adjusted < plain
+
+    def test_cluster_design_effect_widens_the_detectable_effect(self) -> None:
+        """A group-randomised sample of the same size carries less independent
+        information, so the smallest detectable effect must widen, not stay
+        as sharp as an individually-randomised sample of the same size."""
+        plain = mde_from_sample_continuous(sd=1.0, n_total=10_000)
+        clustered = mde_from_sample_continuous(sd=1.0, n_total=10_000, cluster_design_effect=1.45)
+        assert clustered == pytest.approx(plain * (1.45**0.5), rel=0.01)
+
+    def test_rejects_a_design_effect_below_one(self) -> None:
+        with pytest.raises(ValueError):
+            mde_from_sample_continuous(sd=1.0, n_total=10_000, cluster_design_effect=0.9)
 
 
 class TestCuped:
@@ -178,6 +236,14 @@ class TestSkewDiagnostics:
     def test_rejects_tiny_samples(self) -> None:
         with pytest.raises(ValueError):
             skew_diagnostics(pd.Series([1.0, 2.0]))
+
+    def test_tied_mass_at_the_cut_is_not_all_counted_as_the_top_1_pct(self) -> None:
+        """1,000 users tied at the 99th percentile value are not "the top 1%"."""
+        values = pd.Series([0.0] * 9000 + [1.0] * 1000)
+        diagnostics = skew_diagnostics(values)
+        assert diagnostics["share_in_top_1_pct"] < 1.0
+        # Exactly the top 1% by rank: 100 of the 10,000 users.
+        assert diagnostics["share_in_top_1_pct"] == pytest.approx(100 / 1000)
 
 
 class TestSimulatedPower:
@@ -263,16 +329,40 @@ class TestGuardrailSensitivity:
     def test_rare_guardrails_need_far_more_sample(self) -> None:
         rare = guardrail_detectable_harm(baseline_rate=0.002, n_total=40_000)
         common = guardrail_detectable_harm(baseline_rate=0.20, n_total=40_000)
-        assert rare > common
+        assert rare["relative_harm"] > common["relative_harm"]
 
     def test_more_sample_detects_smaller_harm(self) -> None:
         small = guardrail_detectable_harm(baseline_rate=0.01, n_total=20_000)
         large = guardrail_detectable_harm(baseline_rate=0.01, n_total=200_000)
-        assert large < small
+        assert large["relative_harm"] < small["relative_harm"]
 
     def test_rejects_rate_outside_zero_one(self) -> None:
         with pytest.raises(ValueError):
             guardrail_detectable_harm(baseline_rate=1.5, n_total=1_000)
+
+    def test_too_few_expected_events_flags_the_approximation_as_invalid(self) -> None:
+        """Sub-1% guardrail rates are exactly where the normal approximation can
+        fail before the closed-form sensitivity formula admits it: at a small
+        enough sample, the expected event count in the smaller arm drops below
+        the usual floor of 5 and the estimate should say so, rather than
+        reporting a number with no caveat."""
+        too_few_events = guardrail_detectable_harm(baseline_rate=0.002, n_total=4_000)
+        assert too_few_events["expected_events_per_arm"] == pytest.approx(4.0)
+        assert too_few_events["approximation_valid"] is False
+
+        plenty_of_events = guardrail_detectable_harm(baseline_rate=0.20, n_total=40_000)
+        assert plenty_of_events["approximation_valid"] is True
+
+    def test_cluster_design_effect_widens_guardrail_sensitivity(self) -> None:
+        """A group-randomised test is exactly as blunt an instrument for the
+        guardrail as it is for the primary metric: the sensitivity read must
+        carry the same clustering correction or it overstates what the test
+        could actually have caught."""
+        plain = guardrail_detectable_harm(baseline_rate=0.05, n_total=40_000)
+        clustered = guardrail_detectable_harm(
+            baseline_rate=0.05, n_total=40_000, cluster_design_effect=1.45
+        )
+        assert clustered["relative_harm"] > plain["relative_harm"]
 
 
 class TestIntensityOptions:

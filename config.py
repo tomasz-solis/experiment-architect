@@ -20,6 +20,14 @@ ALPHA = 0.05  # two-sided significance threshold
 # a law, and an expensive irreversible launch deserves 0.90.
 DEFAULT_POWER = 0.80
 
+# Sample-ratio-mismatch (SRM) check
+# SRM is checked on every readout, not just once per experiment, so a
+# conventional 0.05 significance threshold would cry wolf constantly on
+# ordinary sampling noise. 0.001 is the standard convention for this specific
+# check (see Fabijan et al., "Diagnosing Sample Ratio Mismatch in Online
+# Controlled Experiments") and is deliberately stricter than ALPHA.
+SRM_P_VALUE_THRESHOLD = 0.001
+
 # Bayesian sampling
 # The posterior win probability and expected loss are estimated by Monte Carlo.
 # At 100k draws the standard error on a probability near 0.5 is

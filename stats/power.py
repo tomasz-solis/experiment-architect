@@ -11,6 +11,8 @@ of planning that a binary sample-size formula leaves out:
   does not model)
 - turning a sample requirement into a calendar date, including the ramp phase and
   the maturation window the last enrolled cohort still needs
+- the design effect a clustered randomisation costs, when the unit is a group
+  (team, market, account) rather than a person
 - treatment intensity, where a stronger dose lowers the sample requirement until
   diminishing returns take over
 - non-compliance: intention-to-treat as the primary estimand, and the complier
@@ -62,6 +64,7 @@ class ContinuousSampleSize(TypedDict):
     sd_used: float
     allocation_cost: float
     variance_retained: float
+    design_effect: float
 
 
 class DurationPlan(TypedDict):
@@ -95,6 +98,15 @@ class SkewDiagnostics(TypedDict):
     zero_share: float
     n_for_clt: int
     normal_approximation_safe: bool
+
+
+class GuardrailSensitivity(TypedDict):
+    """How much a guardrail rate could move before this test would notice, and
+    whether that estimate can be trusted."""
+
+    relative_harm: float
+    expected_events_per_arm: float
+    approximation_valid: bool
 
 
 class ComplianceResult(TypedDict):
@@ -182,6 +194,24 @@ def estimate_cuped_rho(pre_period: pd.Series, outcome: pd.Series) -> float:
     return float(paired["pre"].corr(paired["post"]))
 
 
+def design_effect(average_cluster_size: float, intracluster_correlation: float) -> float:
+    """Kish design effect: how much sample a clustered randomisation costs.
+
+    People inside the same group, team, store, market, or account, tend to
+    behave alike, so each extra member of that group tells the test less than
+    a fresh independent person would. This multiplies the sample requirement
+    to correct for that: 1.0 means no correction at all (each unit is
+    independent, the ordinary per-user case), and it grows with both the size
+    of a typical group and how alike its members are (``rho``, here called the
+    intracluster correlation).
+    """
+    if average_cluster_size < 1:
+        raise ValueError("Average cluster size must be at least 1.")
+    if not 0 <= intracluster_correlation <= 1:
+        raise ValueError("Intracluster correlation must be between 0 and 1.")
+    return 1 + (average_cluster_size - 1) * intracluster_correlation
+
+
 def sample_size_continuous(
     sd: float,
     mde_absolute: float,
@@ -190,6 +220,7 @@ def sample_size_continuous(
     power: float = DEFAULT_POWER,
     split_ratio: float = 0.5,
     rho: float = 0.0,
+    cluster_design_effect: float = 1.0,
 ) -> ContinuousSampleSize:
     """Sample requirement for detecting an absolute change in a mean.
 
@@ -205,6 +236,10 @@ def sample_size_continuous(
     ``rho`` applies the CUPED variance reduction, and ``split_ratio`` applies the
     allocation penalty. Both change the answer materially, so both are reported
     back in the result rather than folded silently into the total.
+
+    ``cluster_design_effect``, from :func:`design_effect`, applies when the
+    randomised unit is a group rather than a person. It defaults to 1.0, a
+    no-op, so the ordinary per-user case is unaffected.
     """
     if sd <= 0:
         raise ValueError("Standard deviation must be greater than zero.")
@@ -214,11 +249,13 @@ def sample_size_continuous(
         raise ValueError("Alpha must be between 0 and 1.")
     if not 0 < power < 1:
         raise ValueError("Power must be between 0 and 1.")
+    if cluster_design_effect < 1.0:
+        raise ValueError("Cluster design effect must be at least 1.0.")
 
     cost = allocation_cost(split_ratio)
     retained = cuped_variance_retained(rho)
     z_sum = _z(1 - alpha / 2) + _z(power)
-    n_total = 4 * (z_sum**2) * (sd**2) * retained * cost / (mde_absolute**2)
+    n_total = 4 * (z_sum**2) * (sd**2) * retained * cost / (mde_absolute**2) * cluster_design_effect
 
     n_treatment = int(math.ceil(n_total * split_ratio))
     n_control = int(math.ceil(n_total * (1 - split_ratio)))
@@ -236,6 +273,7 @@ def sample_size_continuous(
         "sd_used": float(sd),
         "allocation_cost": cost,
         "variance_retained": retained,
+        "design_effect": cluster_design_effect,
     }
 
 
@@ -246,6 +284,7 @@ def mde_from_sample_continuous(
     power: float = DEFAULT_POWER,
     split_ratio: float = 0.5,
     rho: float = 0.0,
+    cluster_design_effect: float = 1.0,
 ) -> float:
     """Smallest absolute effect a given sample can detect. Inverse of the above.
 
@@ -253,16 +292,25 @@ def mde_from_sample_continuous(
     If the answer comes back larger than the effect the business would act on,
     the test cannot answer the question, and inflating the MDE to match the
     traffic only hides that.
+
+    ``cluster_design_effect`` is the same multiplier as in
+    :func:`sample_size_continuous`, applied here as the algebraic inverse: a
+    group-randomised sample of a given size carries less independent
+    information, so the smallest detectable effect widens by the square root
+    of the design effect rather than staying as sharp as an equal-sized
+    individually-randomised sample would be.
     """
     if n_total <= 0:
         raise ValueError("Total sample must be greater than zero.")
     if sd <= 0:
         raise ValueError("Standard deviation must be greater than zero.")
+    if cluster_design_effect < 1.0:
+        raise ValueError("Cluster design effect must be at least 1.0.")
 
     cost = allocation_cost(split_ratio)
     retained = cuped_variance_retained(rho)
     z_sum = _z(1 - alpha / 2) + _z(power)
-    return float(z_sum * math.sqrt(4 * (sd**2) * retained * cost / n_total))
+    return float(z_sum * math.sqrt(4 * (sd**2) * retained * cost * cluster_design_effect / n_total))
 
 
 def plan_duration(
@@ -332,8 +380,11 @@ def skew_diagnostics(values: pd.Series, n_per_arm: int | None = None) -> SkewDia
     array = clean.to_numpy(dtype=float)
     skewness = float(stats.skew(array))
     total = float(array.sum())
-    top_cut = float(np.quantile(array, 0.99))
-    top_share = float(array[array >= top_cut].sum() / total) if total != 0 else float("nan")
+    # Exactly the top 1% by rank, not "at or above the 99th percentile value":
+    # a value with a lot of tied mass at the cut would otherwise count everyone
+    # tied at it as part of "the top 1%", inflating the share.
+    top_n = max(1, math.ceil(0.01 * len(array)))
+    top_share = float(np.sort(array)[-top_n:].sum() / total) if total > 0 else float("nan")
     n_for_clt = int(math.ceil(SKEW_SAFE_N_MULTIPLIER * skewness**2))
 
     return {
@@ -529,7 +580,8 @@ def guardrail_detectable_harm(
     split_ratio: float = 0.5,
     alpha: float = ALPHA,
     power: float = DEFAULT_POWER,
-) -> float:
+    cluster_design_effect: float = 1.0,
+) -> GuardrailSensitivity:
     """Smallest relative regression in a guardrail rate this test could catch.
 
     A guardrail that the test had no power to move is not evidence of safety, and
@@ -538,8 +590,19 @@ def guardrail_detectable_harm(
     the primary metric, so a test powered for a 3% lift in conversion routinely
     cannot rule out a meaningful increase in a 0.2% failure rate.
 
-    Returned as a relative change so it reads on the same scale as the primary
-    MDE.
+    ``relative_harm`` is returned as a relative change so it reads on the same
+    scale as the primary MDE. At low baseline rates the normal approximation
+    behind that number can itself break down before the closed-form formula
+    admits it, exactly the rates guardrails tend to live at, so
+    ``approximation_valid`` reports whether the smaller arm has at least 5
+    expected events, the same normal-approximation floor ``stats/sanity.py``
+    applies to a baseline on its own. Below that floor, treat ``relative_harm``
+    as a guess and use an exact test (e.g. Fisher's) instead.
+
+    ``cluster_design_effect`` matches the one the primary metric was sized
+    with: a group-randomised test is exactly as blunt an instrument for the
+    guardrail as it is for the headline metric, so the sensitivity read must
+    carry the same correction or it will look sharper than the test actually is.
     """
     if not 0 < baseline_rate < 1:
         raise ValueError("Guardrail baseline rate must be between 0 and 1.")
@@ -553,8 +616,14 @@ def guardrail_detectable_harm(
         alpha=alpha,
         power=power,
         split_ratio=split_ratio,
+        cluster_design_effect=cluster_design_effect,
     )
-    return absolute / baseline_rate
+    expected_events_per_arm = baseline_rate * n_total * min(split_ratio, 1 - split_ratio)
+    return {
+        "relative_harm": absolute / baseline_rate,
+        "expected_events_per_arm": expected_events_per_arm,
+        "approximation_valid": expected_events_per_arm >= 5,
+    }
 
 
 def intensity_options(

@@ -4,12 +4,14 @@ from typing import Literal, TypedDict
 
 import numpy as np
 import pandas as pd
-from scipy.stats import chi2_contingency, ttest_ind
+from scipy.stats import chi2_contingency, chisquare, norm, ttest_ind
 
 from config import (
     ALPHA,
     BOOTSTRAP_RANDOM_SEED,
     BOOTSTRAP_RESAMPLES,
+    DEFAULT_POWER,
+    SRM_P_VALUE_THRESHOLD,
     Z_ALPHA,
     Z_BETA,
 )
@@ -72,6 +74,24 @@ class ReverseMDEResult(TypedDict, total=False):
     error: str
 
 
+class SRMResult(TypedDict):
+    """Result of a sample-ratio-mismatch check against the intended split."""
+
+    observed_share: float
+    expected_share: float
+    p_value: float
+    has_mismatch: bool
+
+
+class AttritionResult(TypedDict):
+    """Result of a chi-squared test for differential attrition between arms."""
+
+    dropped_share_a: float
+    dropped_share_b: float
+    p_value: float
+    has_differential_attrition: bool
+
+
 def _validate_binary_inputs(
     successes_a: int,
     failures_a: int,
@@ -89,16 +109,75 @@ def _validate_binary_inputs(
             raise ValueError(f"Group {label}: total sample size is zero.")
 
 
-def check_srm(n_a: int, n_b: int, threshold: float = 0.05) -> tuple[bool, float]:
-    """Check whether the observed split deviates too far from 50/50."""
+def check_srm(n_a: int, n_b: int, expected_share_b: float = 0.5) -> SRMResult:
+    """Check whether the observed split deviates from the split the test intended.
+
+    A fixed percentage-point gap is the wrong instrument here: it is blind to
+    real mismatches at small samples and fires on ordinary noise at large ones.
+    A chi-squared goodness-of-fit test against the *intended* split scales the
+    right way with sample size, and it correctly leaves a deliberate uneven
+    split (e.g. 70/30) alone as long as the observed split matches it.
+    """
     if n_a < 0 or n_b < 0:
         raise ValueError("Sample sizes cannot be negative.")
-    if n_a + n_b == 0:
+    total = n_a + n_b
+    if total == 0:
         raise ValueError("At least one observation is required to check SRM.")
+    if not 0 < expected_share_b < 1:
+        raise ValueError("expected_share_b must be between 0 and 1.")
 
-    ratio = n_a / (n_a + n_b)
-    has_mismatch = abs(ratio - 0.5) > threshold
-    return has_mismatch, ratio
+    observed_share = n_b / total
+    expected_counts = [total * (1 - expected_share_b), total * expected_share_b]
+    _, p_value = chisquare([n_a, n_b], f_exp=expected_counts)
+
+    return {
+        "observed_share": observed_share,
+        "expected_share": expected_share_b,
+        "p_value": float(p_value),
+        "has_mismatch": p_value < SRM_P_VALUE_THRESHOLD,
+    }
+
+
+def check_differential_attrition(
+    kept_a: int,
+    dropped_a: int,
+    kept_b: int,
+    dropped_b: int,
+) -> AttritionResult:
+    """Check whether cleaning removed rows unevenly between the two arms.
+
+    SRM catches assignment gone wrong; this catches cleaning gone wrong. A 2x2
+    chi-squared test on kept/dropped by arm. When neither arm lost any rows,
+    the kept/dropped table has a zero column and the chi-squared expected
+    frequencies are undefined, so that case is reported directly as "no
+    attrition" instead of being handed to scipy.
+    """
+    for label, kept, dropped in (("A", kept_a, dropped_a), ("B", kept_b, dropped_b)):
+        if kept < 0 or dropped < 0:
+            raise ValueError(f"Group {label}: counts cannot be negative.")
+        if kept + dropped == 0:
+            raise ValueError(f"Group {label}: total sample size is zero.")
+
+    dropped_share_a = dropped_a / (kept_a + dropped_a)
+    dropped_share_b = dropped_b / (kept_b + dropped_b)
+
+    if dropped_a == 0 and dropped_b == 0:
+        return {
+            "dropped_share_a": dropped_share_a,
+            "dropped_share_b": dropped_share_b,
+            "p_value": 1.0,
+            "has_differential_attrition": False,
+        }
+
+    table = [[kept_a, dropped_a], [kept_b, dropped_b]]
+    _, p_value, _, _ = chi2_contingency(table)
+
+    return {
+        "dropped_share_a": dropped_share_a,
+        "dropped_share_b": dropped_share_b,
+        "p_value": float(p_value),
+        "has_differential_attrition": p_value < SRM_P_VALUE_THRESHOLD,
+    }
 
 
 def calculate_lift(mean_a: float, mean_b: float) -> float:
@@ -220,11 +299,24 @@ def welch_t_test(
     }
 
 
+def _two_sided_critical_value(alpha: float) -> float:
+    """Two-sided normal critical value, exact at the module's pinned default.
+
+    Returns the pinned ``Z_ALPHA`` constant when ``alpha`` is left at its
+    default, so no existing caller's interval moves by even a rounding unit.
+    A non-default ``alpha`` is computed from scipy instead.
+    """
+    if not 0 < alpha < 1:
+        raise ValueError("Alpha must be between 0 and 1.")
+    return Z_ALPHA if alpha == ALPHA else float(norm.ppf(1 - alpha / 2))
+
+
 def confidence_interval_binary(
     cr_a: float,
     cr_b: float,
     n_a: int,
     n_b: int,
+    alpha: float = ALPHA,
 ) -> tuple[float, float]:
     """Calculate a confidence interval on relative lift for binary outcomes.
 
@@ -233,6 +325,17 @@ def confidence_interval_binary(
     denominator as fixed. That is accurate when the control rate is estimated
     far more precisely than the lift, which holds for the usual A/B sample
     sizes. For very small control groups, prefer a bootstrap interval.
+
+    The variant endpoint (``cr_b`` plus or minus the margin) is clamped to
+    ``[0, 1]`` before it is turned into a relative change, because it stands
+    in for a rate and a rate cannot go negative or above 100%. Skipping that
+    clamp lets a wide margin push the lower bound past -100% relative change,
+    which reads as "fell by more than everything there was to fall", a bound
+    the data never actually supports.
+
+    ``alpha`` defaults to the module's fixed two-sided 95% critical value
+    (``Z_ALPHA``), so every existing caller's interval is unchanged to the
+    unit. Passing a non-default alpha switches to a scipy-computed z-value.
     """
     if n_a <= 0 or n_b <= 0:
         raise ValueError("Sample sizes must be positive.")
@@ -245,17 +348,25 @@ def confidence_interval_binary(
     se_b = np.sqrt(cr_b * (1 - cr_b) / n_b)
     se_diff = np.sqrt(se_a**2 + se_b**2)
 
-    margin = Z_ALPHA * se_diff
-    ci_lower = ((cr_b - margin) - cr_a) / cr_a
-    ci_upper = ((cr_b + margin) - cr_a) / cr_a
+    margin = _two_sided_critical_value(alpha) * se_diff
+    variant_lower = min(max(cr_b - margin, 0.0), 1.0)
+    variant_upper = min(max(cr_b + margin, 0.0), 1.0)
+    ci_lower = (variant_lower - cr_a) / cr_a
+    ci_upper = (variant_upper - cr_a) / cr_a
     return ci_lower, ci_upper
 
 
 def confidence_interval_continuous(
     group_a: pd.Series,
     group_b: pd.Series,
+    alpha: float = ALPHA,
 ) -> tuple[float, float]:
-    """Calculate a confidence interval on relative lift for continuous outcomes."""
+    """Calculate a confidence interval on relative lift for continuous outcomes.
+
+    ``alpha`` defaults to the module's fixed two-sided 95% critical value
+    (``Z_ALPHA``), so every existing caller's interval is unchanged to the
+    unit. Passing a non-default alpha switches to a scipy-computed z-value.
+    """
     if len(group_a) < 2 or len(group_b) < 2:
         raise ValueError("Each group must have at least 2 observations to build a confidence interval.")
     if group_a.isna().any() or group_b.isna().any():
@@ -270,7 +381,7 @@ def confidence_interval_continuous(
     se_b = group_b.std() / np.sqrt(len(group_b))
     se_diff = np.sqrt(se_a**2 + se_b**2)
 
-    margin = Z_ALPHA * se_diff
+    margin = _two_sided_critical_value(alpha) * se_diff
     ci_lower = ((mean_b - margin) - mean_a) / mean_a
     ci_upper = ((mean_b + margin) - mean_a) / mean_a
     return ci_lower, ci_upper
@@ -325,11 +436,31 @@ def calculate_sample_size(
     mde: float,
     daily_traffic: int,
     split_ratio: float = 0.5,
+    alpha: float = ALPHA,
+    power: float = DEFAULT_POWER,
+    rho: float = 0.0,
+    cluster_design_effect: float = 1.0,
 ) -> SampleSizeResult:
     """Estimate total sample size and duration for an A/B test.
 
+    This is the one function that owns binary sample sizing: Signal 01, the
+    sanity checks, and the locked-plan sizing in ``render_plan_lock`` all call
+    this instead of each carrying its own variance formula, so a design and
+    its later verification are always sized the same way.
+
     This formula is paired with :func:`calculate_reverse_mde`, which is its
     algebraic inverse for the default 50/50 split case.
+
+    ``alpha`` and ``power`` default to the module's fixed critical values
+    (``Z_ALPHA``/``Z_BETA``), so every existing caller's numbers are unchanged
+    to the unit. Passing a non-default alpha or power switches to a
+    scipy-computed z-value instead. ``rho`` applies the CUPED variance
+    reduction described in :func:`stats.power.cuped_variance_retained` and
+    defaults to 0.0, a no-op. ``cluster_design_effect``, from
+    :func:`stats.power.design_effect`, applies the same group-randomisation
+    correction Signal 02's sizing block uses, so a plan locked from that
+    block is sized under the same clustering assumption it was designed
+    under, and defaults to 1.0, a no-op.
     """
     if not (0.001 <= baseline <= 0.999):
         raise ValueError("Baseline conversion must be between 0.1% and 99.9%.")
@@ -339,6 +470,14 @@ def calculate_sample_size(
         raise ValueError("Daily traffic must be greater than zero.")
     if not (0 < split_ratio < 1):
         raise ValueError("Split ratio must be between 0 and 1.")
+    if not 0 < alpha < 1:
+        raise ValueError("Alpha must be between 0 and 1.")
+    if not 0 < power < 1:
+        raise ValueError("Power must be between 0 and 1.")
+    if not -1 <= rho <= 1:
+        raise ValueError("rho must be between -1 and 1.")
+    if cluster_design_effect < 1.0:
+        raise ValueError("Cluster design effect must be at least 1.0.")
 
     p2 = baseline * (1 + mde)
     if p2 >= 1:
@@ -347,8 +486,14 @@ def calculate_sample_size(
     delta = p2 - baseline
     split_factor = (1 / split_ratio) + (1 / (1 - split_ratio))
     pooled_var = (baseline * (1 - baseline) + p2 * (1 - p2)) / 2
-    z_sum = Z_ALPHA + Z_BETA
-    n_total = (z_sum**2) * pooled_var * split_factor / (delta**2)
+    variance_retained = 1 - rho**2
+    if alpha == ALPHA and power == DEFAULT_POWER:
+        z_sum = Z_ALPHA + Z_BETA
+    else:
+        z_sum = float(norm.ppf(1 - alpha / 2) + norm.ppf(power))
+    n_total = (
+        (z_sum**2) * pooled_var * variance_retained * split_factor / (delta**2) * cluster_design_effect
+    )
     days = np.ceil(n_total / daily_traffic)
 
     split_penalty = 0

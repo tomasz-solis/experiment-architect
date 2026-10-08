@@ -2,10 +2,100 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import Any
+from collections.abc import Iterable, Sequence
+from typing import Any, TypedDict
 
 import pandas as pd
+
+# Normalised forms that plausibly name the control/baseline arm. Row order in
+# the source CSV is not a design decision, so it must never be what decides
+# which arm is "control" for the lift direction, the confidence interval, and
+# the sample-ratio-mismatch check.
+_CONTROL_ALIASES = {"control", "c", "a", "0", "off", "baseline", "old", "existing"}
+
+# Above this many rows per randomised unit, a CSV reads as one row per
+# repeated observation rather than one row per unit. A little above 1.0
+# tolerates a handful of accidental duplicate rows without firing on them.
+CLUSTERED_ROWS_PER_UNIT_THRESHOLD = 1.05
+
+
+def _normalise_group_label(value: object) -> str:
+    """Normalise a group label for control-arm matching."""
+    return str(value).strip().lower().replace("_", "").replace("-", "")
+
+
+def resolve_control_group(values: Sequence[object]) -> tuple[str, str]:
+    """Pick which of two group values is the control arm, deterministically.
+
+    First-appearance order in an uploaded CSV is an accident of how the file
+    was exported, not a statement of which arm is control. Deciding it that
+    way silently flips the lift direction and the SRM check whenever the
+    treatment rows happen to come first. This picks the control by name when
+    the name says so (e.g. "control", "A", "baseline"), and otherwise falls
+    back to alphabetical order so the choice is at least stated and stable.
+    """
+    distinct = sorted({str(value) for value in values})
+    if len(distinct) != 2:
+        raise ValueError(
+            f"resolve_control_group needs exactly 2 distinct values, found {len(distinct)}: "
+            f"{distinct}."
+        )
+
+    for candidate in distinct:
+        if _normalise_group_label(candidate) in _CONTROL_ALIASES:
+            variant = distinct[1] if candidate == distinct[0] else distinct[0]
+            return candidate, variant
+
+    control, variant = distinct[0], distinct[1]
+    return control, variant
+
+
+_VARIANT_NAME_CANDIDATES = (
+    "variant",
+    "group",
+    "arm",
+    "bucket",
+    "treatment",
+    "test_group",
+    "cohort",
+)
+_METRIC_NAME_CANDIDATES = (
+    "converted",
+    "conversion",
+    "outcome",
+    "revenue",
+    "value",
+    "metric",
+    "target",
+)
+
+
+def _normalise_column_name(name: object) -> str:
+    """Normalise a column name for case-insensitive candidate matching."""
+    return str(name).strip().lower().replace("_", "").replace("-", "").replace(" ", "")
+
+
+def guess_mapping(columns: Sequence[str]) -> dict[str, str]:
+    """Best-guess the variant and metric columns from column names alone.
+
+    This lets the mapping widgets default to something sensible without a
+    model call, so the bundled sample file (and similarly named CSVs) maps
+    itself in one click. Matching is case-insensitive on a normalised name.
+    Returns only the keys it is confident about, and a column already picked
+    for one role is never also offered for the other.
+    """
+    normalised_variant_names = {_normalise_column_name(c) for c in _VARIANT_NAME_CANDIDATES}
+    normalised_metric_names = {_normalise_column_name(c) for c in _METRIC_NAME_CANDIDATES}
+
+    guess: dict[str, str] = {}
+    for column in columns:
+        normalised = _normalise_column_name(column)
+        if "variant_col" not in guess and normalised in normalised_variant_names:
+            guess["variant_col"] = column
+        elif "metric_col" not in guess and normalised in normalised_metric_names:
+            guess["metric_col"] = column
+
+    return guess
 
 
 def validate_mapping_columns(
@@ -94,6 +184,69 @@ def _drop_missing_rows(
             f"{required_columns}. Check that the source dataset has values for these fields."
         )
     return cleaned, dropped_rows
+
+
+def dropped_rows_by_arm(
+    original: pd.DataFrame,
+    cleaned: pd.DataFrame,
+    variant_col: str,
+) -> dict[str, int]:
+    """Count rows removed by cleaning, broken out by arm.
+
+    Cleaning that drops one arm's rows disproportionately is invisible if you
+    only look at the total drop count: it can manufacture or mask a sample
+    ratio mismatch depending on which arm loses more. Rows with a missing or
+    unmapped variant value are excluded from both counts (``value_counts``
+    drops ``NaN`` by default), since they were never attributable to an arm in
+    the first place.
+    """
+    original_counts = original[variant_col].value_counts()
+    cleaned_counts = cleaned[variant_col].value_counts()
+    return {
+        str(arm): int(original_counts[arm] - cleaned_counts.get(arm, 0))
+        for arm in original_counts.index
+    }
+
+
+class AnalysisUnitResult(TypedDict):
+    """How many rows a dataset holds per randomised unit."""
+
+    rows: int
+    units: int
+    rows_per_unit: float
+    is_clustered: bool
+
+
+def check_analysis_unit(df: pd.DataFrame, unit_col: str) -> AnalysisUnitResult:
+    """Check whether the analysis is running on one row per randomised unit.
+
+    Welch's t-test and the chi-squared test both assume every row is an
+    independent observation. If randomisation actually happened per user but
+    the file holds one row per session, per order, or per event, those rows
+    are repeated measurements from the same person, not independent draws.
+    Treating them as independent understates the standard error and overstates
+    significance, silently, because nothing about the numbers looks wrong.
+    This does not fix that by aggregating; it only measures whether the
+    problem is there, so the analyst can decide.
+    """
+    if unit_col not in df.columns:
+        raise ValueError(f"Column '{unit_col}' was not found in the dataset.")
+
+    rows = len(df)
+    if rows == 0:
+        raise ValueError("The dataset has no rows to check.")
+
+    units = int(df[unit_col].nunique(dropna=True))
+    if units == 0:
+        raise ValueError(f"Column '{unit_col}' has no non-missing values.")
+
+    rows_per_unit = rows / units
+    return {
+        "rows": rows,
+        "units": units,
+        "rows_per_unit": rows_per_unit,
+        "is_clustered": rows_per_unit > CLUSTERED_ROWS_PER_UNIT_THRESHOLD,
+    }
 
 
 def prepare_ab_test_frame(

@@ -10,6 +10,7 @@ testable, and don't ask the model to make statistical judgments.
 
 from typing import Literal
 
+from config import ALPHA, DEFAULT_POWER
 from stats.frequentist import calculate_sample_size
 
 Status = Literal["ok", "caution", "fail"]
@@ -28,17 +29,30 @@ def check_traffic_vs_mde(
     mde: float,
     daily_traffic: int,
     weeks: int,
+    split_ratio: float = 0.5,
+    alpha: float = ALPHA,
+    power: float = DEFAULT_POWER,
+    rho: float = 0.0,
+    cluster_design_effect: float = 1.0,
 ) -> CheckResult:
     """Check whether the traffic budget is sufficient to detect the target MDE.
 
-    Delegates to calculate_sample_size for the required-n calculation so the
-    sanity check and the design tab cannot diverge.
+    Delegates to calculate_sample_size for the required-n calculation, and is
+    passed the same split, alpha, power, CUPED rho, and cluster design effect
+    the caller actually configured. Sharing both the function and its inputs
+    is what keeps this check and the design tab from diverging; passing a
+    different split or a default design effect while the design tab uses the
+    real ones would silently reintroduce the divergence.
     """
     size = calculate_sample_size(
         baseline=baseline,
         mde=mde,
         daily_traffic=daily_traffic,
-        split_ratio=0.5,
+        split_ratio=split_ratio,
+        alpha=alpha,
+        power=power,
+        rho=rho,
+        cluster_design_effect=cluster_design_effect,
     )
     required_n = size["n_total"]
     total_n = daily_traffic * weeks * 7
@@ -125,10 +139,25 @@ def run_all_checks(
     mde: float,
     daily_traffic: int,
     weeks: int,
+    split_ratio: float = 0.5,
+    alpha: float = ALPHA,
+    power: float = DEFAULT_POWER,
+    rho: float = 0.0,
+    cluster_design_effect: float = 1.0,
 ) -> list[CheckResult]:
     """Run all sanity checks and return their results in order."""
     return [
-        check_traffic_vs_mde(baseline, mde, daily_traffic, weeks),
+        check_traffic_vs_mde(
+            baseline,
+            mde,
+            daily_traffic,
+            weeks,
+            split_ratio=split_ratio,
+            alpha=alpha,
+            power=power,
+            rho=rho,
+            cluster_design_effect=cluster_design_effect,
+        ),
         check_mde_plausibility(mde),
         check_baseline_stability(baseline),
     ]

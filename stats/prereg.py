@@ -18,12 +18,22 @@ tail got trimmed once the result was visible.
 
 from __future__ import annotations
 
+import json
 import math
+import re
 from datetime import UTC, datetime
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, cast
+
+from scipy.stats import chi2_contingency
 
 from config import ALPHA, DEFAULT_POWER
-from stats.power import MetricLayer, guardrail_detectable_harm, mde_from_sample_continuous
+from stats.frequentist import confidence_interval_binary
+from stats.power import (
+    METRIC_LAYERS,
+    MetricLayer,
+    guardrail_detectable_harm,
+    mde_from_sample_continuous,
+)
 
 Status = Literal["ok", "caution", "fail"]
 
@@ -31,6 +41,13 @@ Status = Literal["ok", "caution", "fail"]
 # rather than merely short: at 90% of planned n the detectable effect grows by
 # about 5%, which rarely changes a decision, and the gap widens quickly below that.
 SAMPLE_SHORTFALL_TOLERANCE = 0.90
+
+# Above this multiple of the planned sample, running long stops looking like
+# ordinary overshoot. A quarter more than planned is what a test left running
+# over a weekend picks up; a large overshoot instead suggests the stopping
+# rule was not the one written down (e.g. "wait until it turns significant"),
+# which inflates the false-positive rate the same way early peeking does.
+OVER_DELIVERY_TOLERANCE = 1.25
 
 # Split drift beyond this is a sample-ratio-mismatch signal: a symptom of broken
 # assignment, filtering, or logging, and a reason to stop reading the effect
@@ -50,6 +67,7 @@ class PreRegistration(TypedDict):
     power: float
     split_ratio: float
     rho: float
+    cluster_design_effect: float
     n_total: int
     ramp_days: int
     enrolment_days: int
@@ -62,7 +80,116 @@ class PreRegistration(TypedDict):
     planned_looks: int
     guardrail_baseline: float | None
     guardrail_detectable_harm: float | None
+    guardrail_approximation_valid: bool | None
+    guardrail_higher_is_worse: bool
     decision_rule: str
+
+
+# Every field a plan needs, and the JSON types that field is allowed to hold.
+# ``parse_preregistration`` checks an upload against this table instead of
+# trusting it, since a plan file can be hand-edited or come from an older,
+# incompatible version of this app.
+_PREREGISTRATION_FIELD_TYPES: dict[str, tuple[type, ...]] = {
+    "created_at": (str,),
+    "primary_metric": (str,),
+    "metric_layer": (str,),
+    "baseline": (int, float),
+    "mde_relative": (int, float),
+    "alpha": (int, float),
+    "power": (int, float),
+    "split_ratio": (int, float),
+    "rho": (int, float),
+    "cluster_design_effect": (int, float),
+    "n_total": (int,),
+    "ramp_days": (int,),
+    "enrolment_days": (int,),
+    "maturation_days": (int,),
+    "total_days": (int,),
+    "daily_new_eligible": (int, float),
+    "transform": (str,),
+    "estimand": (str,),
+    "n_primary_metrics": (int,),
+    "planned_looks": (int,),
+    "guardrail_baseline": (int, float, type(None)),
+    "guardrail_detectable_harm": (int, float, type(None)),
+    "guardrail_approximation_valid": (bool, type(None)),
+    "guardrail_higher_is_worse": (bool,),
+    "decision_rule": (str,),
+}
+
+# Fields added after plans were already being written to disk. A plan missing
+# one of these is not malformed, it is simply older than the field, so it gets
+# this default instead of joining the missing-fields error. Applied before the
+# missing-field check runs, so a genuinely absent field never reaches it, and
+# a present-but-wrong-typed value is still caught by the type check above.
+_COMPATIBILITY_DEFAULTS: dict[str, object] = {
+    "cluster_design_effect": 1.0,
+    "guardrail_higher_is_worse": True,
+}
+
+
+def serialise_preregistration(plan: PreRegistration) -> str:
+    """Serialise a locked plan to indented, key-sorted JSON for download.
+
+    Sorted keys and a fixed indent keep the file byte-stable across runs, so
+    downloading the same plan twice produces an identical file.
+    """
+    return json.dumps(plan, indent=2, sort_keys=True)
+
+
+def parse_preregistration(raw: str) -> PreRegistration:
+    """Restore a plan from a previously downloaded file, validating as it goes.
+
+    A restored file can be hand-edited, truncated, or left over from an
+    incompatible version of this app, so this does not trust it: it checks
+    the text is a JSON object, lists every missing field in one message
+    instead of stopping at the first, and checks every field's type. Raises
+    ``ValueError`` with a message a non-programmer can act on.
+
+    A plan written before ``cluster_design_effect`` or
+    ``guardrail_higher_is_worse`` existed is not treated as missing those
+    fields: each gets the compatibility default in ``_COMPATIBILITY_DEFAULTS``
+    (no clustering correction, higher-is-worse guardrail direction) instead of
+    failing to load.
+    """
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "This file is not valid JSON, so it cannot be read as a plan."
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError(
+            "This file is valid JSON, but a plan must be a single JSON object, not a "
+            f"{type(payload).__name__}."
+        )
+
+    for key, default in _COMPATIBILITY_DEFAULTS.items():
+        payload.setdefault(key, default)
+
+    missing = sorted(key for key in _PREREGISTRATION_FIELD_TYPES if key not in payload)
+    if missing:
+        raise ValueError(
+            "This file is missing fields a plan needs: " + ", ".join(missing) + "."
+        )
+
+    wrong_type = sorted(
+        key
+        for key, allowed_types in _PREREGISTRATION_FIELD_TYPES.items()
+        if not isinstance(payload[key], allowed_types)
+    )
+    if wrong_type:
+        raise ValueError(
+            "These fields have the wrong kind of value: " + ", ".join(wrong_type) + "."
+        )
+
+    if payload["metric_layer"] not in METRIC_LAYERS:
+        raise ValueError(
+            f"'{payload['metric_layer']}' is not a metric type this app understands."
+        )
+
+    return cast(PreRegistration, payload)
 
 
 class VerificationRow(TypedDict):
@@ -75,6 +202,24 @@ class VerificationRow(TypedDict):
     note: str
 
 
+class GuardrailReading(TypedDict):
+    """What actually happened to a guardrail, read against the ship decision.
+
+    A guardrail baseline and a detectable-harm figure only size the test. This
+    is the other half: the reading the guardrail actually produced, so a
+    launch decision can be checked against it instead of resting on the
+    primary metric alone.
+    """
+
+    observed_control_rate: float
+    observed_variant_rate: float
+    relative_change: float
+    ci_relative: tuple[float, float]
+    detectable_harm: float | None
+    status: Status
+    note: str
+
+
 class ReadoutSummary(TypedDict):
     """A result stated in the order a decision-maker can act on."""
 
@@ -83,7 +228,9 @@ class ReadoutSummary(TypedDict):
     ci_relative: tuple[float, float]
     business_impact: tuple[float, float] | None
     material: bool
+    floor_clears_bar: bool
     conclusive: bool
+    downside_ruled_out: bool
     headline: str
     uncertainty_line: str
 
@@ -102,11 +249,13 @@ def build_preregistration(
     rho: float = 0.0,
     alpha: float = ALPHA,
     power: float = DEFAULT_POWER,
+    cluster_design_effect: float = 1.0,
     transform: str = "none",
     estimand: str = "ITT",
     n_primary_metrics: int = 1,
     planned_looks: int = 1,
     guardrail_baseline: float | None = None,
+    guardrail_higher_is_worse: bool = True,
     decision_rule: str = "",
 ) -> PreRegistration:
     """Freeze the design decisions, including the ones easiest to revise later.
@@ -116,6 +265,11 @@ def build_preregistration(
     A winsorisation chosen once the tail is visible, or a third metric promoted
     to primary because the first two were flat, changes the false-positive rate
     of the whole exercise without leaving a trace unless it was written down.
+
+    ``cluster_design_effect``, from :func:`stats.power.design_effect`, is
+    recorded here so the sample requirement, the guardrail sensitivity, and
+    later ``achieved_mde`` all stay sized under the same clustering
+    assumption the plan was locked under. It defaults to 1.0, a no-op.
     """
     if not 0 < baseline < 1 and metric_layer in ("conversion", "activation"):
         raise ValueError("A rate baseline must be between 0 and 1.")
@@ -125,16 +279,22 @@ def build_preregistration(
         raise ValueError("Planned sample must be greater than zero.")
     if n_primary_metrics < 1:
         raise ValueError("There must be at least one primary metric.")
+    if cluster_design_effect < 1.0:
+        raise ValueError("Cluster design effect must be at least 1.0.")
 
     harm: float | None = None
+    harm_valid: bool | None = None
     if guardrail_baseline is not None and 0 < guardrail_baseline < 1:
-        harm = guardrail_detectable_harm(
+        guardrail = guardrail_detectable_harm(
             baseline_rate=guardrail_baseline,
             n_total=n_total,
             split_ratio=split_ratio,
             alpha=alpha,
             power=power,
+            cluster_design_effect=cluster_design_effect,
         )
+        harm = guardrail["relative_harm"]
+        harm_valid = guardrail["approximation_valid"]
 
     return {
         "created_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
@@ -146,6 +306,7 @@ def build_preregistration(
         "power": power,
         "split_ratio": split_ratio,
         "rho": rho,
+        "cluster_design_effect": cluster_design_effect,
         "n_total": n_total,
         "ramp_days": ramp_days,
         "enrolment_days": enrolment_days,
@@ -158,6 +319,8 @@ def build_preregistration(
         "planned_looks": planned_looks,
         "guardrail_baseline": guardrail_baseline,
         "guardrail_detectable_harm": harm,
+        "guardrail_approximation_valid": harm_valid,
+        "guardrail_higher_is_worse": guardrail_higher_is_worse,
         "decision_rule": decision_rule,
     }
 
@@ -167,7 +330,9 @@ def achieved_mde(plan: PreRegistration, actual_n_total: int) -> float:
 
     Recomputed from the sample that arrived, not the sample that was planned.
     When a test lands short, this is the number that says what a null result
-    genuinely rules out.
+    genuinely rules out. Applies the plan's ``cluster_design_effect`` so a
+    delivered sample from a group-randomised test is not read as sharper than
+    it actually is.
     """
     if actual_n_total <= 0:
         raise ValueError("Actual sample must be greater than zero.")
@@ -180,8 +345,33 @@ def achieved_mde(plan: PreRegistration, actual_n_total: int) -> float:
         power=plan["power"],
         split_ratio=plan["split_ratio"],
         rho=plan["rho"],
+        cluster_design_effect=plan["cluster_design_effect"],
     )
     return absolute / baseline if baseline else float("nan")
+
+
+def _normalise_metric_label(label: str) -> str:
+    """Lowercase, strip, and collapse separators to a single space for comparison."""
+    collapsed = re.sub(r"[_\-\s]+", " ", label.strip().lower())
+    return collapsed.strip()
+
+
+def metric_labels_match(planned: str, observed: str) -> bool:
+    """Check whether a plan's free-text metric name plausibly names the observed one.
+
+    The pre-registration stores the primary metric as free text, and a readout
+    can be run on a dataset for a different metric entirely without anything
+    catching it. This is a loose check, not a semantic one: either normalised
+    label containing the other counts as a match, since analysts write the
+    same metric several ways ("checkout conversion" vs "checkout conversion
+    rate"). An empty label on either side has nothing to contradict, so it
+    matches by default rather than raising a false alarm.
+    """
+    planned_norm = _normalise_metric_label(planned)
+    observed_norm = _normalise_metric_label(observed)
+    if not planned_norm or not observed_norm:
+        return True
+    return planned_norm in observed_norm or observed_norm in planned_norm
 
 
 def verify_against_plan(
@@ -205,8 +395,15 @@ def verify_against_plan(
 
     delivered = actual_n_total / plan["n_total"]
     achieved = achieved_mde(plan, actual_n_total)
-    if delivered >= 1.0:
-        sample_status: Status = "ok"
+    if delivered > OVER_DELIVERY_TOLERANCE:
+        sample_status: Status = "caution"
+        sample_note = (
+            "You collected well past the planned sample. That only stays honest if the stopping "
+            "rule was fixed in advance: stopping once a result turned significant inflates the "
+            "false-positive rate no matter how large the sample got."
+        )
+    elif delivered >= 1.0:
+        sample_status = "ok"
         sample_note = (
             "You got all the users you planned for, so the change you set out to detect is still "
             "the change you can detect."
@@ -340,21 +537,182 @@ def verify_against_plan(
 
     if plan["guardrail_detectable_harm"] is not None:
         harm = plan["guardrail_detectable_harm"]
+        note = (
+            f"The thing you must not break would have to get {harm:.1%} worse "
+            "before this test noticed. If it looks untouched, that may only mean you "
+            "could not see it: unverified, rather than clean."
+        )
+        if plan["guardrail_approximation_valid"] is False:
+            note += (
+                " There are too few events at this rate and sample size for this estimate to "
+                "mean anything: use Fisher's exact test instead of trusting this number."
+            )
         rows.append(
             {
                 "item": "Guardrail sensitivity",
                 "planned": f"detect ≥{harm:.1%} relative harm",
                 "actual": f"{actual_n_total:,} units",
                 "status": "caution" if harm > 0.10 else "ok",
-                "note": (
-                    f"The thing you must not break would have to get {harm:.1%} worse "
-                    "before this test noticed. If it looks untouched, that may only mean you "
-                    "could not see it: unverified, rather than clean."
-                ),
+                "note": note,
             }
         )
 
     return rows
+
+
+def read_guardrail(
+    control_events: int,
+    control_n: int,
+    variant_events: int,
+    variant_n: int,
+    detectable_harm: float | None = None,
+    alpha: float = ALPHA,
+    higher_is_worse: bool = True,
+) -> GuardrailReading:
+    """Check what a guardrail actually did, so a launch does not rest on the primary metric alone.
+
+    A guardrail is only worth writing down if something later reads it. This is
+    that reading: the observed rate in each arm, the interval on the relative
+    change, and a status a decision-maker can act on without doing the
+    interval maths themselves. ``higher_is_worse`` sets which direction is the
+    harm: true (the default) matches how ``build_preregistration`` frames a
+    guardrail as "the thing you must not break" (failed payments, complaints,
+    and the like); false is for a guardrail where a drop is the harm instead
+    (retention, successful deliveries), and flips the failing and cautionary
+    conditions to the other side of zero.
+
+    ``detectable_harm``, carried over from :func:`stats.power.guardrail_detectable_harm`,
+    is what turns a clean reading into either "ok" or "caution": a guardrail
+    that moved by less than the test could ever have noticed has not been
+    verified as safe, it has simply not been checked, and the note says so
+    rather than calling it proof.
+
+    When the control arm has zero events, a relative change does not exist. Instead
+    of raising an error, this function switches to absolute counts in the note and
+    uses chi-squared test to determine whether the difference is statistically
+    significant. Both arms zero (no events in either arm) returns status "caution"
+    with note explaining neither arm was triggered. Control zero with variant events
+    uses chi2_contingency to determine status based on the direction of harm.
+    """
+    for label, events, n in (("control", control_events, control_n), ("variant", variant_events, variant_n)):
+        if n <= 0:
+            raise ValueError(f"Guardrail {label} sample size must be greater than zero.")
+        if events < 0:
+            raise ValueError(f"Guardrail {label} event count cannot be negative.")
+        if events > n:
+            raise ValueError(f"Guardrail {label} event count cannot exceed the users measured.")
+
+    control_rate = control_events / control_n
+    variant_rate = variant_events / variant_n
+
+    if control_rate <= 0:
+        ci_relative: tuple[float, float] = (float("nan"), float("nan"))
+
+        if variant_rate <= 0:
+            relative_change = 0.0
+            status: Status = "caution"
+            note = (
+                f"Neither arm saw this event (control: {control_events:,} of {control_n:,}; "
+                f"variant: {variant_events:,} of {variant_n:,}). A guardrail that never fires "
+                "in either arm cannot tell whether the change was safe."
+            )
+        else:
+            relative_change = float("inf")
+            chi2, p_value, dof, expected = chi2_contingency(
+                [[control_events, control_n - control_events],
+                 [variant_events, variant_n - variant_events]]
+            )
+
+            if higher_is_worse:
+                if p_value < alpha:
+                    status = "fail"
+                    note = (
+                        f"The variant saw {variant_events:,} of these in {variant_n:,} users "
+                        f"where the control saw none ({control_events:,} of {control_n:,}). "
+                        f"A percentage change against a zero baseline does not exist, but this "
+                        f"difference is statistically significant (p={p_value:.4f}). This is new "
+                        "harm appearing where there was none. Do not ship on the strength of the "
+                        "primary result while this guardrail is failing."
+                    )
+                else:
+                    status = "caution"
+                    note = (
+                        f"The variant saw {variant_events:,} of these in {variant_n:,} users "
+                        f"where the control saw none ({control_events:,} of {control_n:,}). "
+                        f"A percentage change against a zero baseline does not exist. This could "
+                        f"be noise (p={p_value:.4f}), so watch it rather than calling it broken."
+                    )
+            else:
+                if p_value < alpha:
+                    status = "ok"
+                    note = (
+                        f"For this guardrail, more is improvement. The variant saw {variant_events:,} "
+                        f"of these in {variant_n:,} users where the control saw none "
+                        f"({control_events:,} of {control_n:,}). A percentage change against a "
+                        f"zero baseline does not exist, but the absolute increase is statistically "
+                        f"significant (p={p_value:.4f}) and represents improvement for this guardrail."
+                    )
+                else:
+                    status = "caution"
+                    note = (
+                        f"For this guardrail, more is improvement. The variant saw {variant_events:,} "
+                        f"of these in {variant_n:,} users where the control saw none "
+                        f"({control_events:,} of {control_n:,}). A percentage change against a "
+                        f"zero baseline does not exist. This increase could be noise (p={p_value:.4f})."
+                    )
+    else:
+        relative_change = (variant_rate - control_rate) / control_rate
+        ci_relative = confidence_interval_binary(control_rate, variant_rate, control_n, variant_n, alpha=alpha)
+        ci_lower, ci_upper = ci_relative
+        underpowered = detectable_harm is not None and abs(relative_change) < detectable_harm
+
+        if higher_is_worse:
+            failing = ci_lower > 0
+            moved_the_wrong_way = relative_change > 0
+        else:
+            failing = ci_upper < 0
+            moved_the_wrong_way = relative_change < 0
+
+        if failing:
+            status = "fail"
+            zero_side = "stays above zero" if higher_is_worse else "stays below zero"
+            note = (
+                f"This moved {relative_change:+.1%}, and the range ({ci_lower:+.1%} to "
+                f"{ci_upper:+.1%}) {zero_side}, so this is not noise. The ship decision does not "
+                "belong to the primary metric alone: do not ship on the strength of the primary "
+                "result while this guardrail is failing."
+            )
+        elif moved_the_wrong_way:
+            status = "caution"
+            note = (
+                f"This moved {relative_change:+.1%}, the wrong way for this guardrail, but the "
+                f"range ({ci_lower:+.1%} to {ci_upper:+.1%}) still touches zero, so this could be "
+                "noise rather than real harm. Watch it rather than calling it broken or calling it "
+                "clean."
+            )
+        elif underpowered:
+            status = "caution"
+            note = (
+                f"This reads clean at {relative_change:+.1%}, but the test could only have caught "
+                f"a problem of {detectable_harm:.1%} or bigger. A clean reading this small is "
+                "unverified, not proof that nothing broke."
+            )
+        else:
+            status = "ok"
+            note = (
+                f"This moved {relative_change:+.1%}, inside a range ({ci_lower:+.1%} to "
+                f"{ci_upper:+.1%}) that does not point to harm."
+            )
+
+    return {
+        "observed_control_rate": control_rate,
+        "observed_variant_rate": variant_rate,
+        "relative_change": relative_change,
+        "ci_relative": ci_relative,
+        "detectable_harm": detectable_harm,
+        "status": status,
+        "note": note,
+    }
 
 
 def summarise_readout(
@@ -375,7 +733,16 @@ def summarise_readout(
 
     ``conclusive`` is the distinction most readouts blur: an interval that spans
     both a meaningful gain and a meaningful loss is a test that failed to answer
-    the question, which is different from evidence of no effect.
+    the question, which is different from evidence of no effect. A result only
+    earns that label once the interval rules out both a material gain and a
+    material loss, or excludes zero outright; ruling out only the upside (a
+    tight-looking upper bound while the lower bound still reaches a material
+    loss) is not conclusive, it just means the test never checked for harm.
+
+    ``material`` fires on the point estimate, so it can be true even when the
+    pessimistic end of the range does not clear the bar. ``floor_clears_bar``
+    is the stricter, interval-based version, and matches this app's own
+    default decision rule: ship only if even the pessimistic end beats the bar.
     """
     if baseline == 0:
         raise ValueError("Baseline must be non-zero to express a relative uplift.")
@@ -386,7 +753,9 @@ def summarise_readout(
     absolute = observed_rate_or_mean - baseline
     relative = absolute / baseline
     material = lower > 0 and relative >= mde_relative
-    conclusive = lower > 0 or upper < mde_relative
+    floor_clears_bar = lower >= mde_relative
+    downside_ruled_out = lower > -mde_relative
+    conclusive = lower > 0 or (upper < mde_relative and downside_ruled_out)
 
     impact: tuple[float, float] | None = None
     if population_size is not None and value_per_unit is not None:
@@ -395,10 +764,15 @@ def summarise_readout(
             upper * baseline * population_size * value_per_unit,
         )
 
-    if material:
+    if floor_clears_bar:
         headline = (
-            f"Worth shipping: {relative:+.1%}, above the {mde_relative:.1%} you set as worth "
-            "acting on."
+            f"Worth shipping: {relative:+.1%}, and even the pessimistic end of the range clears "
+            f"the {mde_relative:.1%} bar."
+        )
+    elif material:
+        headline = (
+            f"Probably worth shipping: {relative:+.1%}, but the range runs as low as {lower:.1%}, "
+            f"under the {mde_relative:.1%} bar."
         )
     elif lower > 0:
         headline = (
@@ -412,21 +786,31 @@ def summarise_readout(
             f"Nothing worth acting on: {relative:+.1%}, and anything bigger than {upper:.1%} is "
             "ruled out."
         )
+    elif upper < mde_relative and not downside_ruled_out:
+        headline = (
+            f"Cannot rule out a loss: {relative:+.1%}, and the range runs down to {lower:.1%}. "
+            "This test ruled out a win, not a loss."
+        )
     else:
         headline = (
             f"Cannot tell: {relative:+.1%}, but the range runs from {lower:.1%} to {upper:.1%}. "
             "This test could not separate a win from a loss."
         )
 
-    uncertainty = (
-        f"The true change is somewhere between {lower:.1%} and {upper:.1%}. "
-        + (
+    if upper < mde_relative and not downside_ruled_out:
+        uncertainty_tail = (
+            f"The upside is ruled out, but the bottom of the range is still a loss of "
+            f"{abs(lower):.1%}, which this test has not ruled out."
+        )
+    elif upper < mde_relative:
+        uncertainty_tail = (
             "Anything bigger than the top of that range is ruled out, so whatever is there is "
             "smaller than you care about."
-            if upper < mde_relative
-            else "That range still includes changes worth acting on."
         )
-    )
+    else:
+        uncertainty_tail = "That range still includes changes worth acting on."
+
+    uncertainty = f"The true change is somewhere between {lower:.1%} and {upper:.1%}. " + uncertainty_tail
 
     return {
         "absolute_uplift": absolute,
@@ -434,7 +818,9 @@ def summarise_readout(
         "ci_relative": ci_relative,
         "business_impact": impact,
         "material": material,
+        "floor_clears_bar": floor_clears_bar,
         "conclusive": conclusive,
+        "downside_ruled_out": downside_ruled_out,
         "headline": headline,
         "uncertainty_line": uncertainty,
     }
