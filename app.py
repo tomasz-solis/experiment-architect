@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Sequence
 from typing import Any, TypedDict
 
@@ -11,7 +12,7 @@ import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
-from config import ALPHA, PAGE_LAYOUT, PAGE_TITLE, SMALL_SAMPLE_THRESHOLD
+from config import ALPHA, DEFAULT_POWER, PAGE_LAYOUT, PAGE_TITLE, SMALL_SAMPLE_THRESHOLD
 from llm.client import ask_agent as llm_ask_agent
 from llm.client import ask_agent_json as llm_ask_agent_json
 from llm.client import create_llm_client
@@ -26,6 +27,7 @@ from stats.frequentist import (
     calculate_lift,
     calculate_reverse_mde,
     calculate_sample_size,
+    check_differential_attrition,
     check_srm,
     chi_squared_test,
     confidence_interval_binary,
@@ -38,6 +40,7 @@ from stats.power import (
     DurationPlan,
     MetricLayer,
     compliance_effects,
+    design_effect,
     estimate_cuped_rho,
     guardrail_detectable_harm,
     intensity_options,
@@ -50,15 +53,23 @@ from stats.power import (
 from stats.prereg import (
     PreRegistration,
     build_preregistration,
+    metric_labels_match,
+    parse_preregistration,
+    read_guardrail,
+    serialise_preregistration,
     summarise_readout,
     verify_against_plan,
 )
 from stats.sanity import run_all_checks
 from stats.validation import (
+    check_analysis_unit,
+    dropped_rows_by_arm,
+    guess_mapping,
     normalize_metric_type,
     prepare_ab_test_frame,
     prepare_did_frame,
     prepare_rdd_frame,
+    resolve_control_group,
     validate_mapping_columns,
 )
 from ui.components import (
@@ -70,10 +81,12 @@ from ui.components import (
     render_sidebar_intro,
     render_signal_header,
     render_summary_cards,
+    show_attrition_warning,
     show_bayesian_decision,
     show_bayesian_results,
     show_data_quality,
     show_frequentist_results,
+    show_guardrail_reading,
     show_plan_verification,
     show_preregistration,
     show_readout_summary,
@@ -85,7 +98,14 @@ from ui.state import (
     CAUSAL_HAS_CONTROL,
     CAUSAL_HAS_CUTOFF,
     CAUSAL_IS_OPT_IN,
+    CSV_METRIC_COL,
+    CSV_METRIC_TYPE,
+    CSV_SUGGESTED_METRIC_COL,
+    CSV_SUGGESTED_METRIC_TYPE,
+    CSV_SUGGESTED_VARIANT_COL,
+    CSV_UNIT_COL,
     CSV_UPLOAD,
+    CSV_VARIANT_COL,
     DID_UPLOAD,
     MAIN_BASELINE,
     MAIN_MDE,
@@ -97,8 +117,10 @@ from ui.state import (
     MANUAL_VISITORS_B,
     POWER_ALPHA,
     POWER_BASELINE_MEAN,
+    POWER_CLUSTER_SIZE,
     POWER_DAILY_NEW,
     POWER_GUARDRAIL_BASELINE,
+    POWER_ICC,
     POWER_MATURATION,
     POWER_MDE_ABS,
     POWER_METRIC_LAYER,
@@ -108,6 +130,7 @@ from ui.state import (
     POWER_SD,
     POWER_UPLOAD,
     PREREG_PLAN,
+    PREREG_UPLOAD,
     RDD_UPLOAD,
     UPLOAD_KEYS,
     read_uploaded_dataframe,
@@ -427,7 +450,23 @@ def render_design_section() -> None:
     metric_right.metric("Split penalty", f"{size['split_penalty']}%")
 
     if st.button("Run the design review", key="sanity_button"):
-        checks = run_all_checks(baseline, mde, daily_traffic, weeks_required)
+        alpha = float(st.session_state.get(POWER_ALPHA, ALPHA))
+        power = float(st.session_state.get(POWER_POWER, DEFAULT_POWER))
+        rho = float(st.session_state.get(POWER_RHO, 0.0))
+        avg_cluster_size = float(st.session_state.get(POWER_CLUSTER_SIZE, 1.0))
+        icc = float(st.session_state.get(POWER_ICC, 0.0))
+        cluster_effect = design_effect(avg_cluster_size, icc)
+        checks = run_all_checks(
+            baseline,
+            mde,
+            daily_traffic,
+            weeks_required,
+            split_ratio=split_ratio,
+            alpha=alpha,
+            power=power,
+            rho=rho,
+            cluster_design_effect=cluster_effect,
+        )
         for name, status, reason in checks:
             if not reason:
                 continue
@@ -561,8 +600,47 @@ def render_continuous_sizing() -> tuple[float, float, float, float, float, int]:
         )
     )
 
+    cluster_left, cluster_right = st.columns(2)
+    avg_cluster_size = float(
+        cluster_left.number_input(
+            "Average units per group",
+            min_value=1.0,
+            value=1.0,
+            step=1.0,
+            key=POWER_CLUSTER_SIZE,
+            help=(
+                "Leave this at 1 if you randomise individual people. Raise it only if you "
+                "randomise by team, store, market, or account, to roughly how many people sit "
+                "inside a typical one."
+            ),
+        )
+    )
+    icc = float(
+        cluster_right.number_input(
+            "How alike people in the same group are (intracluster correlation)",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.0,
+            step=0.01,
+            key=POWER_ICC,
+            help=(
+                "0 means people in the same group are no more alike than two strangers. "
+                "Higher means the group tends to move together, so each extra person inside "
+                "it tells the test less than a fresh independent person would."
+            ),
+        )
+    )
+    st.caption(
+        "People inside the same group behave alike, so a group of 10 does not carry 10 "
+        "people's worth of independent information. This raises the sample requirement to "
+        "correct for that. It only matters when you randomise groups rather than individuals. "
+        "This multiplier carries into the locked plan below, so the plan you write down is the "
+        "one this sizing block actually produced."
+    )
+
     split_ratio = float(st.session_state.get(MAIN_SPLIT, 50)) / 100
     try:
+        cluster_effect = design_effect(avg_cluster_size, icc)
         size = sample_size_continuous(
             sd=sd,
             mde_absolute=mde_absolute,
@@ -571,6 +649,7 @@ def render_continuous_sizing() -> tuple[float, float, float, float, float, int]:
             power=power,
             split_ratio=split_ratio,
             rho=rho,
+            cluster_design_effect=cluster_effect,
         )
     except ValueError as error:
         st.error(str(error))
@@ -604,6 +683,20 @@ def render_continuous_sizing() -> tuple[float, float, float, float, float, int]:
             f"{size['allocation_cost']:.2f}x as many users as an even one. The smaller group is "
             "always the bottleneck, so the whole test is only as sharp as the thinner side. "
             "Limited capacity or risk is a fair reason to do it. Habit is not."
+        )
+    if size["design_effect"] > 1.0:
+        without_clustering = sample_size_continuous(
+            sd=sd,
+            mde_absolute=mde_absolute,
+            alpha=alpha,
+            power=power,
+            split_ratio=split_ratio,
+            rho=rho,
+        )["n_total"]
+        st.caption(
+            f"Randomising groups instead of individuals multiplies the sample by "
+            f"{size['design_effect']:.2f}x: {size['n_total'] - without_clustering:,} more users "
+            "than if you had randomised individuals directly."
         )
     return sd, mde_absolute, rho, alpha, power, size["n_total"]
 
@@ -929,6 +1022,13 @@ def render_intensity_and_compliance(sd: float, alpha: float, power: float) -> No
         st.caption(compliance["estimand_note"])
 
 
+def _preregistration_filename(plan: PreRegistration) -> str:
+    """Build a download filename from the plan's metric name and lock date."""
+    date = plan["created_at"].split(" ")[0]
+    slug = re.sub(r"[^a-z0-9]+", "-", plan["primary_metric"].lower()).strip("-") or "plan"
+    return f"prereg-{slug}-{date}.json"
+
+
 def render_plan_lock(alpha: float, power: float, rho: float, duration: DurationPlan) -> None:
     """Freeze the design decisions so the readout can verify them later."""
     baseline = float(st.session_state.get(MAIN_BASELINE, 10.0)) / 100
@@ -973,30 +1073,37 @@ def render_plan_lock(alpha: float, power: float, rho: float, duration: DurationP
         key="prereg_rule",
     )
 
-    rate_sd = float(np.sqrt(baseline * (1 - baseline)))
-    plan_n = sample_size_continuous(
-        sd=rate_sd,
-        mde_absolute=baseline * mde_relative,
+    daily_new_eligible = float(st.session_state.get(POWER_DAILY_NEW, 900.0))
+    avg_cluster_size = float(st.session_state.get(POWER_CLUSTER_SIZE, 1.0))
+    icc = float(st.session_state.get(POWER_ICC, 0.0))
+    cluster_effect = design_effect(avg_cluster_size, icc)
+    plan_n = calculate_sample_size(
+        baseline=baseline,
+        mde=mde_relative,
+        daily_traffic=int(round(daily_new_eligible)),
+        split_ratio=split_ratio,
         alpha=alpha,
         power=power,
-        split_ratio=split_ratio,
         rho=rho,
+        cluster_design_effect=cluster_effect,
     )["n_total"]
     plan_duration_parts = plan_duration(
         n_total=plan_n,
-        daily_new_eligible=float(st.session_state.get(POWER_DAILY_NEW, 900.0)),
+        daily_new_eligible=daily_new_eligible,
         maturation_days=duration["maturation_days"],
         ramp_days=duration["ramp_days"],
     )
 
     if guardrail_baseline > 0:
-        harm = guardrail_detectable_harm(
+        guardrail = guardrail_detectable_harm(
             baseline_rate=guardrail_baseline,
             n_total=plan_n,
             split_ratio=split_ratio,
             alpha=alpha,
             power=power,
+            cluster_design_effect=cluster_effect,
         )
+        harm = guardrail["relative_harm"]
         tone = st.warning if harm > 0.10 else st.info
         tone(
             f"At {plan_n:,} users, something that happens {guardrail_baseline:.2%} of the time "
@@ -1004,12 +1111,19 @@ def render_plan_lock(alpha: float, power: float, rho: float, duration: DurationP
             "that will look untouched whether it was or not, so read a clean guardrail as "
             "'we could not see a problem', not 'there was none'."
         )
+        if not guardrail["approximation_valid"]:
+            st.warning(
+                f"At this rate and sample size, only about {guardrail['expected_events_per_arm']:.0f} "
+                "events are expected in the smaller arm. That is too few for the estimate above "
+                "to mean anything: use Fisher's exact test instead of this number."
+            )
 
     st.caption(
-        f"Recalculated with the settings you chose above: {plan_n:,} users over "
-        f"{plan_duration_parts['total_days']} days, at a {alpha:.2f} false-alarm rate, "
-        f"{power:.0%} chance of spotting the change, a {split_ratio:.0%} split, and past "
-        f"behaviour predicting the outcome at {rho:.2f}."
+        f"Sized with the same binary formula Signal 01 and the sanity checks use, so this "
+        f"number and the one you saw while designing the test never quietly disagree: "
+        f"{plan_n:,} users over {plan_duration_parts['total_days']} days, at a {alpha:.2f} "
+        f"false-alarm rate, {power:.0%} chance of spotting the change, a {split_ratio:.0%} "
+        f"split, and past behaviour predicting the outcome at {rho:.2f}."
     )
 
     if st.button("Lock this as the pre-registered plan", key="prereg_lock_button"):
@@ -1022,11 +1136,12 @@ def render_plan_lock(alpha: float, power: float, rho: float, duration: DurationP
             ramp_days=plan_duration_parts["ramp_days"],
             enrolment_days=plan_duration_parts["enrolment_days"],
             maturation_days=plan_duration_parts["maturation_days"],
-            daily_new_eligible=float(st.session_state.get(POWER_DAILY_NEW, 900.0)),
+            daily_new_eligible=daily_new_eligible,
             split_ratio=split_ratio,
             rho=rho,
             alpha=alpha,
             power=power,
+            cluster_design_effect=cluster_effect,
             transform=transform,
             n_primary_metrics=n_primary,
             planned_looks=planned_looks,
@@ -1041,6 +1156,35 @@ def render_plan_lock(alpha: float, power: float, rho: float, duration: DurationP
     locked = st.session_state.get(PREREG_PLAN)
     if locked is not None:
         show_preregistration(locked)
+
+    st.caption(
+        "Why keep a copy: the plan is the contract between how this test was designed and how "
+        "the result gets read. A browser refresh, or the app going to sleep, should not be able "
+        "to quietly erase that contract, so download it once it is locked and restore it here "
+        "if it goes missing."
+    )
+    download_col, restore_col = st.columns(2)
+    with download_col:
+        if locked is not None:
+            st.download_button(
+                "Download this plan",
+                data=serialise_preregistration(locked),
+                file_name=_preregistration_filename(locked),
+                mime="application/json",
+                key="prereg_download_button",
+            )
+    with restore_col:
+        restored_file = st.file_uploader(
+            "Restore a plan from a downloaded file", type="json", key=PREREG_UPLOAD
+        )
+        if restored_file is not None:
+            try:
+                restored_plan = parse_preregistration(restored_file.getvalue().decode("utf-8"))
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state[PREREG_PLAN] = restored_plan
+                st.success("Plan restored from the uploaded file.")
 
 
 def render_power_section() -> None:
@@ -1084,6 +1228,11 @@ class PlanAttestations(TypedDict):
     looks_taken: int
     population_size: int | None
     value_per_unit: float | None
+    guardrail_control_events: int
+    guardrail_control_n: int
+    guardrail_variant_events: int
+    guardrail_variant_n: int
+    guardrail_higher_is_worse: bool
 
 
 def render_plan_attestations(key_prefix: str) -> PlanAttestations:
@@ -1102,6 +1251,11 @@ def render_plan_attestations(key_prefix: str) -> PlanAttestations:
             "looks_taken": 1,
             "population_size": None,
             "value_per_unit": None,
+            "guardrail_control_events": 0,
+            "guardrail_control_n": 0,
+            "guardrail_variant_events": 0,
+            "guardrail_variant_n": 0,
+            "guardrail_higher_is_worse": True,
         }
 
     show_preregistration(plan)
@@ -1161,6 +1315,58 @@ def render_plan_attestations(key_prefix: str) -> PlanAttestations:
         )
     )
 
+    st.markdown(
+        "**What happened to the thing you must not break.** Sizing a guardrail is not the same "
+        "as checking one. Leave these at 0 to skip; fill them in and the readout below will read "
+        "the guardrail against the ship decision instead of leaving it unchecked."
+    )
+    guardrail_left, guardrail_middle_left, guardrail_middle_right, guardrail_right = st.columns(4)
+    guardrail_control_events = int(
+        guardrail_left.number_input(
+            "Guardrail events, control",
+            min_value=0,
+            value=0,
+            step=1,
+            key=f"{key_prefix}_guardrail_control_events",
+        )
+    )
+    guardrail_control_n = int(
+        guardrail_middle_left.number_input(
+            "Guardrail users, control",
+            min_value=0,
+            value=0,
+            step=1,
+            key=f"{key_prefix}_guardrail_control_n",
+        )
+    )
+    guardrail_variant_events = int(
+        guardrail_middle_right.number_input(
+            "Guardrail events, variant",
+            min_value=0,
+            value=0,
+            step=1,
+            key=f"{key_prefix}_guardrail_variant_events",
+        )
+    )
+    guardrail_variant_n = int(
+        guardrail_right.number_input(
+            "Guardrail users, variant",
+            min_value=0,
+            value=0,
+            step=1,
+            key=f"{key_prefix}_guardrail_variant_n",
+        )
+    )
+    guardrail_higher_is_worse = st.checkbox(
+        "For this guardrail, is a higher number worse?",
+        value=plan["guardrail_higher_is_worse"],
+        key=f"{key_prefix}_guardrail_higher_is_worse",
+        help=(
+            "Ticked for things like failed payments or complaints, where more is bad. Untick "
+            "for things like retention or successful deliveries, where a drop is the harm."
+        ),
+    )
+
     return {
         "actual_days": actual_days,
         "transform_applied": transform_applied,
@@ -1168,6 +1374,11 @@ def render_plan_attestations(key_prefix: str) -> PlanAttestations:
         "looks_taken": looks_taken,
         "population_size": population_size or None,
         "value_per_unit": value_per_unit or None,
+        "guardrail_control_events": guardrail_control_events,
+        "guardrail_control_n": guardrail_control_n,
+        "guardrail_variant_events": guardrail_variant_events,
+        "guardrail_variant_n": guardrail_variant_n,
+        "guardrail_higher_is_worse": guardrail_higher_is_worse,
     }
 
 
@@ -1179,11 +1390,18 @@ def render_plan_check(
     ci_relative: tuple[float, float],
     metrics_tested: int,
     attestations: PlanAttestations,
+    metric_label: str | None = None,
 ) -> None:
     """Verify the delivered experiment against the locked plan, then state the result."""
     plan: PreRegistration | None = st.session_state.get(PREREG_PLAN)
     if plan is None:
         return
+
+    if metric_label is not None and not metric_labels_match(plan["primary_metric"], metric_label):
+        st.warning(
+            f"This plan was written for '{plan['primary_metric']}', but this readout is on "
+            f"'{metric_label}'. Check you are verifying the result of the right test."
+        )
 
     actual_days = attestations["actual_days"]
     total_n = n_control + n_treatment
@@ -1200,6 +1418,26 @@ def render_plan_check(
     )
     st.markdown("### What you promised, and what you got")
     show_plan_verification(rows)
+
+    control_events = attestations["guardrail_control_events"]
+    control_n = attestations["guardrail_control_n"]
+    variant_events = attestations["guardrail_variant_events"]
+    variant_n = attestations["guardrail_variant_n"]
+    if control_n > 0 and variant_n > 0:
+        st.markdown("### What happened to the guardrail")
+        try:
+            reading = read_guardrail(
+                control_events=control_events,
+                control_n=control_n,
+                variant_events=variant_events,
+                variant_n=variant_n,
+                detectable_harm=plan["guardrail_detectable_harm"],
+                higher_is_worse=attestations["guardrail_higher_is_worse"],
+            )
+        except ValueError as error:
+            st.error(str(error))
+        else:
+            show_guardrail_reading(reading)
 
     if baseline_rate <= 0:
         st.caption(
@@ -1275,8 +1513,10 @@ def render_manual_section() -> None:
             cr_a = conversions_a / visitors_a
             cr_b = conversions_b / visitors_b
             lift = calculate_lift(cr_a, cr_b)
-            _, srm_ratio = check_srm(visitors_a, visitors_b)
-            show_srm_warning(srm_ratio)
+            manual_plan: PreRegistration | None = st.session_state.get(PREREG_PLAN)
+            manual_expected_share_b = manual_plan["split_ratio"] if manual_plan is not None else 0.5
+            srm_result = check_srm(visitors_a, visitors_b, expected_share_b=manual_expected_share_b)
+            show_srm_warning(srm_result)
             st.metric("Relative lift", f"{lift:.2%}")
 
             failures_a = visitors_a - conversions_a
@@ -1380,8 +1620,16 @@ def render_csv_section() -> None:
         show_data_quality(df)
         st.write("Preview:", df.head(3))
 
-        if st.button("Run the dataframe audit", key="csv_analysis_button"):
-            mapping = ask_agent_json(
+        columns = list(df.columns)
+        guessed_mapping = guess_mapping(columns)
+        suggested_variant: str | None = st.session_state.get(CSV_SUGGESTED_VARIANT_COL)
+        suggested_metric: str | None = st.session_state.get(CSV_SUGGESTED_METRIC_COL)
+        suggested_metric_type: str | None = st.session_state.get(CSV_SUGGESTED_METRIC_TYPE)
+
+        if ai_enabled and st.button(
+            "Ask the model to suggest the mapping", key="csv_suggest_mapping_button"
+        ):
+            suggestion = ask_agent_json(
                 system_role="""
                 You are a data scientist helper.
                 Identify these fields from the dataset preview:
@@ -1393,150 +1641,262 @@ def render_csv_section() -> None:
                 """,
                 user_prompt=(
                     f"Headers: {list(df.columns)}\n"
-                    f"Preview:\n{df.head(3).to_markdown()}"
+                    f"Preview:\n{df.head(3).to_csv(index=False)}"
                 ),
                 expected_keys=["variant_col", "metric_col", "metric_type"],
             )
+            if suggestion:
+                st.session_state[CSV_SUGGESTED_VARIANT_COL] = suggestion.get("variant_col")
+                st.session_state[CSV_SUGGESTED_METRIC_COL] = suggestion.get("metric_col")
+                st.session_state[CSV_SUGGESTED_METRIC_TYPE] = suggestion.get("metric_type")
+                # Clear the widgets' own keys so the next render picks up the fresh
+                # suggestion through the index below. Writing straight into a widget's
+                # key after the widget has already been instantiated this run raises,
+                # so this only ever touches state before the selectboxes are created.
+                st.session_state.pop(CSV_VARIANT_COL, None)
+                st.session_state.pop(CSV_METRIC_COL, None)
+                st.session_state.pop(CSV_METRIC_TYPE, None)
+                st.rerun()
+            else:
+                st.warning(
+                    "The model could not read the column headers. Pick the columns "
+                    "by hand below instead."
+                )
 
-            if mapping:
-                try:
-                    validated = validate_mapping_columns(
-                        mapping,
-                        df,
-                        ["variant_col", "metric_col"],
+        default_variant = (
+            suggested_variant if suggested_variant in columns else guessed_mapping.get("variant_col")
+        )
+        default_metric = (
+            suggested_metric if suggested_metric in columns else guessed_mapping.get("metric_col")
+        )
+        variant_index = 0
+        if default_variant is not None and default_variant in columns:
+            variant_index = columns.index(default_variant)
+        metric_index = 1 if len(columns) > 1 else 0
+        if default_metric is not None and default_metric in columns:
+            metric_index = columns.index(default_metric)
+
+        map_left, map_middle, map_right = st.columns(3)
+        variant_col = map_left.selectbox(
+            "Variant column", columns, index=variant_index, key=CSV_VARIANT_COL
+        )
+        metric_col = map_middle.selectbox(
+            "Outcome column", columns, index=metric_index, key=CSV_METRIC_COL
+        )
+        unit_col = map_right.selectbox(
+            "Which column identifies the randomised unit? (optional)",
+            ["(none)", *columns],
+            index=0,
+            key=CSV_UNIT_COL,
+            help=(
+                "Only needed if the file might hold more than one row per person, for example "
+                "one row per session or per order. Pick the column that names the person, "
+                "account, or whatever was actually randomised."
+            ),
+        )
+
+        outcome_type_options = ["binary", "continuous"]
+        metric_type_index = 0
+        if suggested_metric_type is not None and suggested_metric_type in outcome_type_options:
+            metric_type_index = outcome_type_options.index(suggested_metric_type)
+        outcome_type = st.radio(
+            "What kind of outcome is this?",
+            outcome_type_options,
+            index=metric_type_index,
+            format_func=lambda value: {
+                "binary": "A yes/no flag (for example, did they convert)",
+                "continuous": "A number (for example, revenue or time spent)",
+            }[value],
+            key=CSV_METRIC_TYPE,
+        )
+        st.caption(
+            "Pick the variant and outcome columns yourself, or ask the model for a starting "
+            "guess above. Either way, the model only ever proposes column names here. It "
+            "never computes a statistic."
+        )
+
+        if st.button("Run the dataframe audit", key="csv_analysis_button"):
+            mapping = {
+                "variant_col": variant_col,
+                "metric_col": metric_col,
+                "metric_type": outcome_type,
+            }
+            try:
+                validated = validate_mapping_columns(
+                    mapping,
+                    df,
+                    ["variant_col", "metric_col"],
+                )
+                metric_type = normalize_metric_type(mapping["metric_type"])
+                analysis_df, dropped_rows = prepare_ab_test_frame(
+                    df,
+                    variant_col=validated["variant_col"],
+                    metric_col=validated["metric_col"],
+                    metric_type=metric_type,
+                )
+                logger.info(
+                    "Accepted CSV mapping: variant=%s metric=%s type=%s",
+                    validated["variant_col"],
+                    validated["metric_col"],
+                    metric_type,
+                )
+
+                show_dropped_rows_notice(dropped_rows, len(df))
+                st.success(
+                    f"Mapped: Variant=`{validated['variant_col']}`, "
+                    f"Metric=`{validated['metric_col']}` ({metric_type})"
+                )
+
+                if unit_col != "(none)":
+                    unit_result = check_analysis_unit(analysis_df, unit_col)
+                    if unit_result["is_clustered"]:
+                        st.warning(
+                            f"This file holds about {unit_result['rows_per_unit']:.1f} rows per "
+                            f"`{unit_col}`. The tests below treat every row as an independent "
+                            "observation, so the p-value and the interval are optimistic. "
+                            "Aggregate to one row per unit before analysing, or use a method "
+                            "that accounts for clustering."
+                        )
+
+                distinct_groups = analysis_df[validated["variant_col"]].drop_duplicates().tolist()
+                groups_by_label = {str(value): value for value in distinct_groups}
+                group_a_label, group_b_label = resolve_control_group(distinct_groups)
+                st.caption(
+                    f"Treating `{group_a_label}` as control and `{group_b_label}` as variant. "
+                    f"The lift below is measured as variant against control."
+                )
+                group_a = analysis_df[
+                    analysis_df[validated["variant_col"]] == groups_by_label[group_a_label]
+                ][validated["metric_col"]]
+                group_b = analysis_df[
+                    analysis_df[validated["variant_col"]] == groups_by_label[group_b_label]
+                ][validated["metric_col"]]
+
+                n_a, n_b = len(group_a), len(group_b)
+                mean_a, mean_b = group_a.mean(), group_b.mean()
+
+                csv_plan: PreRegistration | None = st.session_state.get(PREREG_PLAN)
+                csv_expected_share_b = csv_plan["split_ratio"] if csv_plan is not None else 0.5
+
+                dropped_by_arm = dropped_rows_by_arm(df, analysis_df, validated["variant_col"])
+                dropped_a = dropped_by_arm.get(group_a_label, 0)
+                dropped_b = dropped_by_arm.get(group_b_label, 0)
+
+                raw_srm = check_srm(
+                    n_a + dropped_a, n_b + dropped_b, expected_share_b=csv_expected_share_b
+                )
+                cleaned_srm = check_srm(n_a, n_b, expected_share_b=csv_expected_share_b)
+                show_srm_warning(raw_srm, stage_label="Before cleaning")
+                show_srm_warning(cleaned_srm, stage_label="After cleaning")
+                if not raw_srm["has_mismatch"] and cleaned_srm["has_mismatch"]:
+                    st.warning(
+                        "The raw split looked fine before cleaning. The cleaning step is what "
+                        "introduced this imbalance, not assignment or logging upstream."
                     )
-                    metric_type = normalize_metric_type(mapping["metric_type"])
-                    analysis_df, dropped_rows = prepare_ab_test_frame(
-                        df,
-                        variant_col=validated["variant_col"],
-                        metric_col=validated["metric_col"],
-                        metric_type=metric_type,
+
+                attrition = check_differential_attrition(n_a, dropped_a, n_b, dropped_b)
+                show_attrition_warning(attrition)
+
+                lift = calculate_lift(float(mean_a), float(mean_b))
+                st.metric(f"Lift ({group_b_label} vs {group_a_label})", f"{lift:.2%}")
+
+                test_results: FrequentistTestResult
+                if metric_type == "binary":
+                    successes_a = int(group_a.sum())
+                    successes_b = int(group_b.sum())
+                    failures_a = n_a - successes_a
+                    failures_b = n_b - successes_b
+                    test_results = chi_squared_test(
+                        successes_a,
+                        failures_a,
+                        successes_b,
+                        failures_b,
                     )
-                    logger.info(
-                        "Accepted CSV mapping: variant=%s metric=%s type=%s",
-                        validated["variant_col"],
-                        validated["metric_col"],
-                        metric_type,
+                    ci_lower, ci_upper = confidence_interval_binary(
+                        float(mean_a),
+                        float(mean_b),
+                        n_a,
+                        n_b,
+                    )
+                else:
+                    small_sample = (
+                        n_a <= SMALL_SAMPLE_THRESHOLD or n_b <= SMALL_SAMPLE_THRESHOLD
+                    )
+                    effect_size_method: EffectSizeMethod = (
+                        "averaged" if small_sample else "pooled"
+                    )
+                    test_results = welch_t_test(
+                        group_a, group_b, effect_size_method=effect_size_method
+                    )
+                    if small_sample:
+                        ci_lower, ci_upper = bootstrap_ci_relative_lift_continuous(
+                            group_a, group_b
+                        )
+                        st.caption(
+                            f"Small sample (≤{SMALL_SAMPLE_THRESHOLD} in a group): using a "
+                            "percentile bootstrap CI and the unequal-variance effect size, "
+                            "which avoid the normal approximation."
+                        )
+                    else:
+                        ci_lower, ci_upper = confidence_interval_continuous(group_a, group_b)
+
+                if csv_method in ["Frequentist (P-values)", "Both"]:
+                    guardrails = build_frequentist_guardrails(
+                        n_comparisons=csv_n_comparisons,
+                        peeked_early=csv_peeked_early,
+                    )
+                    st.markdown("### Frequentist read")
+                    show_frequentist_guardrails(guardrails)
+                    show_frequentist_results(
+                        test_results,
+                        ci_lower,
+                        ci_upper,
+                        float(mean_a),
+                        float(mean_b),
+                        [group_a_label, group_b_label],
+                        alpha_threshold=guardrails["adjusted_alpha"],
                     )
 
-                    show_dropped_rows_notice(dropped_rows, len(df))
-                    st.success(
-                        f"Mapped: Variant=`{validated['variant_col']}`, "
-                        f"Metric=`{validated['metric_col']}` ({metric_type})"
-                    )
-
-                    groups = analysis_df[validated["variant_col"]].drop_duplicates().tolist()
-                    group_a = analysis_df[analysis_df[validated["variant_col"]] == groups[0]][
-                        validated["metric_col"]
-                    ]
-                    group_b = analysis_df[analysis_df[validated["variant_col"]] == groups[1]][
-                        validated["metric_col"]
-                    ]
-
-                    n_a, n_b = len(group_a), len(group_b)
-                    mean_a, mean_b = group_a.mean(), group_b.mean()
-                    _, srm_ratio = check_srm(n_a, n_b)
-                    show_srm_warning(srm_ratio)
-
-                    lift = calculate_lift(float(mean_a), float(mean_b))
-                    st.metric(f"Lift ({groups[1]} vs {groups[0]})", f"{lift:.2%}")
-
-                    test_results: FrequentistTestResult
+                if csv_method in ["Bayesian (Probability)", "Both"]:
                     if metric_type == "binary":
-                        successes_a = int(group_a.sum())
-                        successes_b = int(group_b.sum())
-                        failures_a = n_a - successes_a
-                        failures_b = n_b - successes_b
-                        test_results = chi_squared_test(
+                        if csv_method == "Both":
+                            st.divider()
+                        st.markdown("### Bayesian read")
+                        csv_bayes = beta_binomial_analysis(
                             successes_a,
                             failures_a,
                             successes_b,
                             failures_b,
                         )
-                        ci_lower, ci_upper = confidence_interval_binary(
-                            float(mean_a),
-                            float(mean_b),
-                            n_a,
-                            n_b,
+                        show_bayesian_results(csv_bayes, [group_a_label, group_b_label])
+                        recommendation, confidence = get_decision_recommendation(
+                            csv_bayes["prob_b_wins"],
+                            csv_bayes["expected_loss"],
+                            baseline_for_relative_tolerance=float(mean_a),
+                        )
+                        show_bayesian_decision(
+                            recommendation,
+                            confidence,
+                            group_name=group_b_label,
+                            expected_loss=csv_bayes["expected_loss"],
                         )
                     else:
-                        small_sample = (
-                            n_a <= SMALL_SAMPLE_THRESHOLD or n_b <= SMALL_SAMPLE_THRESHOLD
-                        )
-                        effect_size_method: EffectSizeMethod = (
-                            "averaged" if small_sample else "pooled"
-                        )
-                        test_results = welch_t_test(
-                            group_a, group_b, effect_size_method=effect_size_method
-                        )
-                        if small_sample:
-                            ci_lower, ci_upper = bootstrap_ci_relative_lift_continuous(
-                                group_a, group_b
-                            )
-                            st.caption(
-                                f"Small sample (≤{SMALL_SAMPLE_THRESHOLD} in a group): using a "
-                                "percentile bootstrap CI and the unequal-variance effect size, "
-                                "which avoid the normal approximation."
-                            )
-                        else:
-                            ci_lower, ci_upper = confidence_interval_continuous(group_a, group_b)
+                        st.info("Bayesian analysis is only available for binary metrics.")
 
-                    if csv_method in ["Frequentist (P-values)", "Both"]:
-                        guardrails = build_frequentist_guardrails(
-                            n_comparisons=csv_n_comparisons,
-                            peeked_early=csv_peeked_early,
-                        )
-                        st.markdown("### Frequentist read")
-                        show_frequentist_guardrails(guardrails)
-                        show_frequentist_results(
-                            test_results,
-                            ci_lower,
-                            ci_upper,
-                            float(mean_a),
-                            float(mean_b),
-                            [str(groups[0]), str(groups[1])],
-                            alpha_threshold=guardrails["adjusted_alpha"],
-                        )
+                render_plan_check(
+                    n_control=n_a,
+                    n_treatment=n_b,
+                    baseline_rate=float(mean_a),
+                    observed_rate=float(mean_b),
+                    ci_relative=(ci_lower, ci_upper),
+                    metrics_tested=csv_n_comparisons,
+                    metric_label=validated["metric_col"],
+                    attestations=csv_attestations,
+                )
 
-                    if csv_method in ["Bayesian (Probability)", "Both"]:
-                        if metric_type == "binary":
-                            if csv_method == "Both":
-                                st.divider()
-                            st.markdown("### Bayesian read")
-                            csv_bayes = beta_binomial_analysis(
-                                successes_a,
-                                failures_a,
-                                successes_b,
-                                failures_b,
-                            )
-                            show_bayesian_results(csv_bayes, [str(groups[0]), str(groups[1])])
-                            recommendation, confidence = get_decision_recommendation(
-                                csv_bayes["prob_b_wins"],
-                                csv_bayes["expected_loss"],
-                                baseline_for_relative_tolerance=float(mean_a),
-                            )
-                            show_bayesian_decision(
-                                recommendation,
-                                confidence,
-                                group_name=str(groups[1]),
-                                expected_loss=csv_bayes["expected_loss"],
-                            )
-                        else:
-                            st.info("Bayesian analysis is only available for binary metrics.")
-
-                    render_plan_check(
-                        n_control=n_a,
-                        n_treatment=n_b,
-                        baseline_rate=float(mean_a),
-                        observed_rate=float(mean_b),
-                        ci_relative=(ci_lower, ci_upper),
-                        metrics_tested=csv_n_comparisons,
-                        attestations=csv_attestations,
-                    )
-
-                except Exception as exc:
-                    logger.warning("CSV analysis failed: %s", exc)
-                    st.error(f"Analysis failed: {exc}")
+            except Exception as exc:
+                logger.warning("CSV analysis failed: %s", exc)
+                st.error(f"Analysis failed: {exc}")
 
     st.divider()
     render_section_note(
@@ -1643,7 +2003,7 @@ def _render_did_analysis() -> None:
         """,
         user_prompt=(
             f"Columns: {list(df_did.columns)}\n\n"
-            f"Preview:\n{df_did.head(3).to_markdown()}"
+            f"Preview:\n{df_did.head(3).to_csv(index=False)}"
         ),
         expected_keys=["unit_col", "time_col", "treatment_col", "outcome_col"],
     )
@@ -1759,7 +2119,7 @@ def _render_rdd_analysis() -> None:
         """,
         user_prompt=(
             f"Columns: {list(df_rdd.columns)}\n\n"
-            f"Preview:\n{df_rdd.head(3).to_markdown()}"
+            f"Preview:\n{df_rdd.head(3).to_csv(index=False)}"
         ),
         expected_keys=["running_var", "treatment_col", "outcome_col"],
     )

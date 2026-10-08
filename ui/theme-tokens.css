@@ -1,5 +1,5 @@
 /* =========================================================================
-   Product Decision Lab — shared design tokens + base spacing (source of truth).
+   Product Decision Lab: shared design tokens + base spacing (source of truth).
    Identical across product-decision-under-uncertainty, experiment-architect,
    and measurement-maturity-framework. Edit it here, then copy this file
    verbatim into the other two repos. Injected before each app's own CSS, so
@@ -16,21 +16,21 @@
   --ds-blue: #4f6dff;          /* primary accent */
   --ds-blue-strong: #3a56e0;   /* AA-contrast accent text on light surfaces */
   --ds-blue-soft: rgba(79, 109, 255, 0.12);
-  --ds-mint: #1ecf9b;          /* positive / healthy — fills and marks only */
-  --ds-mint-deep: #0a7d5c;     /* positive / healthy — text and strokes (5.1:1 on white) */
-  --ds-amber: #d18a1f;         /* caution — fills and marks only */
-  --ds-amber-deep: #9a6a12;    /* caution — text and strokes */
-  --ds-red: #dd5b52;           /* risk — fills and marks only */
-  --ds-red-deep: #c43d33;      /* risk — text and strokes */
+  --ds-mint: #1ecf9b;          /* positive / healthy: fills and marks only */
+  --ds-mint-deep: #0a7d5c;     /* positive / healthy: text and strokes (5.1:1 on white) */
+  --ds-amber: #d18a1f;         /* caution: fills and marks only */
+  --ds-amber-deep: #9a6a12;    /* caution: text and strokes */
+  --ds-red: #dd5b52;           /* risk: fills and marks only */
+  --ds-red-deep: #c43d33;      /* risk: text and strokes */
 
   /* Chart series: one categorical ramp, shared by every Lab app, in this order.
      Adjacent series differ in lightness as well as hue, and colour must always be
-     paired with a marker, dash, or label — never hue alone. */
+     paired with a marker, dash, or label, never hue alone. */
   --ds-chart-1: #4f6dff;       /* periwinkle */
   --ds-chart-2: #0a7d5c;       /* deep mint */
   --ds-chart-3: #b5741a;       /* deep amber */
   --ds-chart-4: #c43d33;       /* deep red */
-  --ds-chart-baseline: #646c79;/* muted slate — the do-nothing / baseline series */
+  --ds-chart-baseline: #646c79;/* muted slate, the do-nothing / baseline series */
   --ds-chart-grid: #dde3ec;
 
   /* Focus: one visible ring, on every interactive element, on both surfaces. */
@@ -89,7 +89,7 @@
 
 /* Reduced motion. Each app animates panel entrances and hover lifts; this file is
    injected BEFORE the app's own stylesheet, so the app's animation rules would
-   otherwise win on order. !important is the deliberate override — an accessibility
+   otherwise win on order. !important is the deliberate override: an accessibility
    preference outranks a house transition. */
 @media (prefers-reduced-motion: reduce) {
   *,

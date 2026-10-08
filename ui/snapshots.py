@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 import streamlit as st
 
+from config import ALPHA, DEFAULT_POWER
 from stats.bayesian import beta_binomial_analysis, get_decision_recommendation
 from stats.causal import select_causal_method
 from stats.decision_cards import (
@@ -30,7 +31,8 @@ from stats.frequentist import (
     check_srm,
     chi_squared_test,
 )
-from stats.power import plan_duration, sample_size_continuous
+from stats.power import design_effect, plan_duration, sample_size_continuous
+from stats.prereg import PreRegistration
 from stats.sanity import run_all_checks, severity_rank
 from ui.formatting import build_card, duration_tone, first_sentence
 from ui.state import (
@@ -49,9 +51,13 @@ from ui.state import (
     MANUAL_PEEKED_EARLY,
     MANUAL_VISITORS_A,
     MANUAL_VISITORS_B,
+    POWER_ALPHA,
+    POWER_CLUSTER_SIZE,
     POWER_DAILY_NEW,
+    POWER_ICC,
     POWER_MATURATION,
     POWER_MDE_ABS,
+    POWER_POWER,
     POWER_RAMP,
     POWER_RHO,
     POWER_SD,
@@ -75,10 +81,26 @@ def design_snapshot() -> dict[str, Any]:
     mde = float(st.session_state.get(MAIN_MDE, 10.0)) / 100
     daily_traffic = int(st.session_state.get(MAIN_TRAFFIC, 5000))
     split_ratio = float(st.session_state.get(MAIN_SPLIT, 50)) / 100
+    alpha = float(st.session_state.get(POWER_ALPHA, ALPHA))
+    power = float(st.session_state.get(POWER_POWER, DEFAULT_POWER))
+    rho = float(st.session_state.get(POWER_RHO, 0.0))
+    avg_cluster_size = float(st.session_state.get(POWER_CLUSTER_SIZE, 1.0))
+    icc = float(st.session_state.get(POWER_ICC, 0.0))
+    cluster_effect = design_effect(avg_cluster_size, icc)
 
     size = calculate_sample_size(baseline, mde, daily_traffic, split_ratio)
     weeks_required = max(1, int(np.ceil(size["days"] / 7)))
-    checks = run_all_checks(baseline, mde, daily_traffic, weeks_required)
+    checks = run_all_checks(
+        baseline,
+        mde,
+        daily_traffic,
+        weeks_required,
+        split_ratio=split_ratio,
+        alpha=alpha,
+        power=power,
+        rho=rho,
+        cluster_design_effect=cluster_effect,
+    )
     weakest_name, weakest_status, weakest_reason = max(
         checks,
         key=lambda item: severity_rank(item[1]),
@@ -122,10 +144,17 @@ def power_snapshot() -> dict[str, Any]:
     daily_new = float(st.session_state.get(POWER_DAILY_NEW, 900))
     maturation = int(st.session_state.get(POWER_MATURATION, 30))
     ramp = int(st.session_state.get(POWER_RAMP, 0))
+    avg_cluster_size = float(st.session_state.get(POWER_CLUSTER_SIZE, 1.0))
+    icc = float(st.session_state.get(POWER_ICC, 0.0))
 
     try:
+        cluster_effect = design_effect(avg_cluster_size, icc)
         size = sample_size_continuous(
-            sd=sd, mde_absolute=mde_absolute, split_ratio=split_ratio, rho=rho
+            sd=sd,
+            mde_absolute=mde_absolute,
+            split_ratio=split_ratio,
+            rho=rho,
+            cluster_design_effect=cluster_effect,
         )
         duration = plan_duration(
             n_total=size["n_total"],
@@ -220,7 +249,9 @@ def manual_snapshot() -> dict[str, Any]:
         peeked_early=peeked_early,
     )
     adjusted_alpha = guardrails["adjusted_alpha"]
-    has_srm, _ = check_srm(visitors_a, visitors_b)
+    plan: PreRegistration | None = st.session_state.get(PREREG_PLAN)
+    expected_share_b = plan["split_ratio"] if plan is not None else 0.5
+    has_srm = check_srm(visitors_a, visitors_b, expected_share_b=expected_share_b)["has_mismatch"]
 
     frequentist_card = build_manual_frequentist_card(
         p_value=test_results["p_value"],

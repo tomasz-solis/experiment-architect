@@ -10,8 +10,8 @@ import streamlit as st
 
 from config import ALPHA
 from stats.bayesian import BayesianAnalysisResult
-from stats.frequentist import FrequentistTestResult
-from stats.prereg import PreRegistration, ReadoutSummary, VerificationRow
+from stats.frequentist import AttritionResult, FrequentistTestResult, SRMResult
+from stats.prereg import GuardrailReading, PreRegistration, ReadoutSummary, VerificationRow
 from ui.formatting import SummaryCard
 
 _THEME_TOKENS_PATH = Path(__file__).parent / "theme-tokens.css"
@@ -553,12 +553,35 @@ def show_data_quality(df: pd.DataFrame) -> None:
         st.dataframe(df)
 
 
-def show_srm_warning(ratio: float, threshold: float = 0.05) -> None:
-    """Show a warning when the experiment split looks suspicious."""
-    if abs(ratio - 0.5) > threshold:
-        st.warning(
-            f"Sample Ratio Mismatch: {ratio:.1%} vs expected 50%. Check your randomization."
-        )
+def show_srm_warning(result: SRMResult, stage_label: str = "") -> None:
+    """Warn when the observed split deviates from the split the test intended.
+
+    ``stage_label`` (e.g. "Before cleaning", "After cleaning") tells two SRM
+    checks apart when both are shown on the same page; without it, a raw-data
+    mismatch and a cleaning-introduced one read as the identical sentence
+    twice with no way to see which is which.
+    """
+    if not result["has_mismatch"]:
+        return
+    prefix = f"{stage_label}: " if stage_label else ""
+    st.warning(
+        f"{prefix}Sample ratio mismatch: expected {result['expected_share']:.0%} of users in the "
+        f"variant, got {result['observed_share']:.1%} (p={result['p_value']:.4f}). This means "
+        "users are being dropped unevenly somewhere in assignment, eligibility, or logging. "
+        "Do not read the effect until you know the cause."
+    )
+
+
+def show_attrition_warning(result: AttritionResult) -> None:
+    """Warn when data cleaning removed rows unevenly between the two arms."""
+    if not result["has_differential_attrition"]:
+        return
+    st.warning(
+        f"Differential attrition: cleaning dropped {result['dropped_share_a']:.1%} of arm A's "
+        f"rows vs {result['dropped_share_b']:.1%} of arm B's (p={result['p_value']:.4f}). The "
+        "two groups may no longer be comparable, because the treatment itself could be "
+        "affecting who has usable data."
+    )
 
 
 def show_frequentist_results(
@@ -663,10 +686,18 @@ def show_plan_verification(rows: list[VerificationRow]) -> None:
 
 
 def show_readout_summary(summary: ReadoutSummary) -> None:
-    """Render a result decision-first: effect, then uncertainty, then money."""
-    if summary["material"]:
+    """Render a result decision-first: effect, then uncertainty, then money.
+
+    Tone follows how strong the claim actually is, not just whether the point
+    estimate looks good: ``floor_clears_bar`` is the only case where even the
+    pessimistic end of the range clears the bar, so it is the only one that
+    earns a green success. A "material" result whose interval floor sits just
+    above zero, or a "conclusive" null, is real information but not a
+    green-light, so both render as info.
+    """
+    if summary["floor_clears_bar"]:
         st.success(summary["headline"])
-    elif summary["conclusive"]:
+    elif summary["material"] or summary["conclusive"]:
         st.info(summary["headline"])
     else:
         st.warning(summary["headline"])
@@ -676,12 +707,47 @@ def show_readout_summary(summary: ReadoutSummary) -> None:
     right.metric("Change as a percentage", f"{summary['relative_uplift']:+.2%}")
     st.caption(summary["uncertainty_line"])
 
+    if not summary["downside_ruled_out"]:
+        st.caption("This test has not ruled out a loss on the downside.")
+
     if summary["business_impact"] is not None:
         low, high = summary["business_impact"]
         st.caption(
             f"Across everyone a full rollout would reach, that is worth somewhere between "
             f"{low:,.0f} and {high:,.0f}. The range is the honest answer. The single number "
             "people usually quote is just one point inside it."
+        )
+
+
+def show_guardrail_reading(reading: GuardrailReading) -> None:
+    """Render what a guardrail actually did, styled like the other status renderers.
+
+    Red for a guardrail that broke, amber for one that cannot yet be told
+    apart from noise or was never sized to see harm this small, green for one
+    that stayed where it should.
+    """
+    import math
+
+    tone = {"fail": st.error, "caution": st.warning, "ok": st.success}[reading["status"]]
+    tone(reading["note"])
+    left, right = st.columns(2)
+    left.metric("Control rate", f"{reading['observed_control_rate']:.2%}")
+    right.metric("Variant rate", f"{reading['observed_variant_rate']:.2%}")
+    ci_lower, ci_upper = reading["ci_relative"]
+
+    relative_change = reading["relative_change"]
+    if math.isinf(relative_change):
+        st.caption(
+            "Relative change: infinite (control arm had zero events, so no baseline for comparison)."
+        )
+    elif math.isnan(ci_lower) or math.isnan(ci_upper):
+        st.caption(
+            "Relative change: cannot be computed (baseline was zero in one or both arms)."
+        )
+    else:
+        st.caption(
+            f"Relative change: {relative_change:+.1%}, somewhere between "
+            f"{ci_lower:+.1%} and {ci_upper:+.1%}."
         )
 
 

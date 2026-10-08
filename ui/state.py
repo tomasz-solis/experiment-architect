@@ -34,8 +34,11 @@ POWER_DAILY_NEW = "power_daily_new"
 POWER_MATURATION = "power_maturation"
 POWER_RAMP = "power_ramp"
 POWER_GUARDRAIL_BASELINE = "power_guardrail_baseline"
+POWER_CLUSTER_SIZE = "power_cluster_size"
+POWER_ICC = "power_icc"
 POWER_UPLOAD = "power_upload"
 PREREG_PLAN = "prereg_plan"
+PREREG_UPLOAD = "prereg_upload"
 
 # Manual-result lens
 MANUAL_VISITORS_A = "manual_visitors_a"
@@ -55,7 +58,16 @@ CSV_UPLOAD = "csv_upload"
 DID_UPLOAD = "did_upload"
 RDD_UPLOAD = "rdd_upload"
 
-UPLOAD_KEYS = (CSV_UPLOAD, DID_UPLOAD, RDD_UPLOAD, POWER_UPLOAD)
+# Raw CSV audit lens: manual column mapping and the model's optional suggestion
+CSV_VARIANT_COL = "csv_variant_col"
+CSV_METRIC_COL = "csv_metric_col"
+CSV_METRIC_TYPE = "csv_metric_type"
+CSV_UNIT_COL = "csv_unit_col"
+CSV_SUGGESTED_VARIANT_COL = "csv_suggested_variant_col"
+CSV_SUGGESTED_METRIC_COL = "csv_suggested_metric_col"
+CSV_SUGGESTED_METRIC_TYPE = "csv_suggested_metric_type"
+
+UPLOAD_KEYS = (CSV_UPLOAD, DID_UPLOAD, RDD_UPLOAD, POWER_UPLOAD, PREREG_UPLOAD)
 
 
 def read_uploaded_dataframe(widget_key: str) -> pd.DataFrame | None:
