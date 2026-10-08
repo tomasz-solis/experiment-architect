@@ -51,15 +51,17 @@ production metric pipelines rather than CSV-based analysis.
 
 - Designs A/B tests with sample size, reverse MDE, split-ratio penalty, and deterministic sanity checks.
 - Sizes value metrics on variance rather than a base rate, and prices CUPED variance reduction from a pre/post correlation measured in your own data.
+- Sizes cluster-randomised tests (team, market, account) with a design effect, so group-level randomisation isn't priced as if every unit were independent.
 - Converts a sample requirement into a calendar date using newly eligible users per day, the safety ramp, and the maturation window the last enrolled cohort still needs.
 - Simulates the experiment on uploaded historical outcomes when the metric is skewed, and reports the false-positive rate under no effect so a miscalibrated analysis shows up before launch.
 - Costs treatment doses against calendar time, and separates intention-to-treat from the complier effect when take-up is partial.
-- Locks the design as a pre-registration, then checks the readout against it: sample delivered, split drift, estimand, outcome transform, alpha spend, and the smallest guardrail regression the test could have caught.
+- Locks the design as a pre-registration you can download and restore, then checks the readout against it: sample delivered, split drift, estimand, outcome transform, alpha spend, and the smallest guardrail regression the test could have caught.
+- Reads a guardrail's actual movement against a declared harm direction, and won't call an underpowered clean reading proof of safety.
 - Shows a sensitivity view so you can see how traffic and baseline assumptions change the detectable effect.
 - Recommends a causal method when randomization is not possible.
 - Runs DiD with a parallel-trends pre-test and clustered standard errors.
 - Runs RDD with a density check around the cutoff, a rule-of-thumb local bandwidth, and a bandwidth sweep for robustness.
-- Analyzes raw CSVs with frequentist or Bayesian methods after validating mapped columns, dtypes, and missing values.
+- Analyzes raw CSVs with frequentist or Bayesian methods after validating mapped columns, dtypes, and missing values, checking the split against the planned ratio before and after cleaning, flagging uneven attrition between arms, and warning when a file holds more than one row per randomised unit.
 - Adds frequentist guardrails for multiple primary metrics and early peeking.
 - Uses expected loss alongside posterior win probability for Bayesian shipping recommendations.
 
@@ -112,7 +114,7 @@ Then start the app:
 streamlit run app.py
 ```
 
-The app still works without an API key. The LLM-powered mapping and code-generation paths are simply disabled.
+The app still works without an API key. Column mapping in the Raw CSV audit lens is a set of ordinary dropdowns, so the analysis runs with picks made by hand; the "Ask the model to suggest the mapping" button and the code-generation paths are simply disabled.
 
 ## Streamlit Community Cloud
 
@@ -127,7 +129,7 @@ The app is kept awake by a scheduled workflow in [product-decision-lab](https://
 
 ## Quick demo data
 
-If you want a fast demo without preparing your own file, upload [examples/sample_ab_test.csv](examples/sample_ab_test.csv) in the **Raw CSV audit** lens. It contains 1,000 rows (500 control / 500 treatment), a binary `converted` column, and a continuous `revenue` column, enough to exercise both analysis paths. The same file works in the **Power and plan** lens: point
+If you want a fast demo without preparing your own file, upload [examples/sample_ab_test.csv](examples/sample_ab_test.csv) in the **Raw CSV audit** lens. Its column names (`variant`, `converted`) are common enough that the variant and outcome dropdowns pick themselves; pick the columns by hand for a file with less standard names, or use the "Ask the model to suggest the mapping" button as a shortcut when a key is configured. It contains 1,000 rows (500 control / 500 treatment), a binary `converted` column, and a continuous `revenue` column, enough to exercise both analysis paths. The same file works in the **Power and plan** lens: point
 the historical-outcomes uploader at it and use `revenue` as the outcome column to see the skew
 diagnostics and the simulation-based power check.
 

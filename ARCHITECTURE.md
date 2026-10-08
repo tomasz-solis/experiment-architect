@@ -26,6 +26,7 @@ experiment-architect/
 │   ├── test_bayesian.py
 │   ├── test_calibration.py
 │   ├── test_causal.py
+│   ├── test_components.py
 │   ├── test_decision_cards.py
 │   ├── test_formatting.py
 │   ├── test_frequentist.py
@@ -75,23 +76,27 @@ The planning section is deterministic and self-contained:
 
 - `stats.power.sample_size_continuous` and `mde_from_sample_continuous` size a value metric from its variance rather than a base rate
 - `stats.power.cuped_variance_retained` and `estimate_cuped_rho` price variance reduction against a measured pre-period correlation
+- `stats.power.design_effect` prices a clustered randomisation (team, market, account) using the Kish formula, and the result is threaded through the sizing above rather than sized separately
 - `stats.power.plan_duration` converts a sample requirement into calendar time, including the ramp phase and the maturation window the last cohort still needs
 - `stats.power.skew_diagnostics` and `simulate_power` replace the normal approximation with a measurement when the metric is heavily skewed
 - `stats.power.intensity_options` and `compliance_effects` cost treatment doses and separate ITT from the complier effect
-- `stats.prereg.build_preregistration` freezes the design in session state
+- `stats.prereg.build_preregistration` freezes the design, including the design effect and a guardrail baseline, in session state
+- `stats.prereg.read_guardrail` reads what a guardrail actually did once data arrives, and will not call an underpowered clean reading proof of safety
+- `stats.prereg.serialise_preregistration` and `parse_preregistration` download and restore the locked plan as JSON, so it survives a page refresh
 
-The last one is what connects the two halves of the app. Once a plan is locked, the manual and CSV readouts call `stats.prereg.verify_against_plan` and render the delivered sample, split, estimand, transform, alpha spend, and guardrail sensitivity against what was promised, before the effect is shown.
+The last three are what connects the two halves of the app. Once a plan is locked, the manual and CSV readouts call `stats.prereg.verify_against_plan` and render the delivered sample, split, estimand, transform, alpha spend, and guardrail sensitivity against what was promised, before the effect is shown.
 
 ### Raw CSV analysis
 
-This path has four stages:
+This path has five stages:
 
-1. The LLM maps semantic roles such as `variant_col` and `metric_col`.
-2. `llm.client.ask_agent_json()` retries once if the payload is malformed or missing required keys.
-3. `stats.validation` checks that mapped columns exist, coerces numeric or binary fields, and drops rows missing required values.
-4. The app routes the cleaned data to frequentist or Bayesian helpers, then applies frequentist guardrails when the user marks multiple primary metrics or early peeking.
+1. The user picks the variant column, the outcome column, and the outcome type from ordinary dropdowns, defaulted by `stats.validation.guess_mapping()` matching common column names. An optional "Ask the model to suggest the mapping" button pre-fills those dropdowns when a key is configured; the analysis itself never depends on it.
+2. `llm.client.ask_agent_json()` retries once if the suggested payload is malformed or missing required keys, and the button says plainly when the model could not read the headers.
+3. `stats.validation` checks that the chosen columns exist, coerces numeric or binary fields, drops rows missing required values, and, if the user names a unit column, `check_analysis_unit` warns when the file holds several rows per randomised unit, since the tests below treat every row as independent.
+4. `stats.validation.resolve_control_group` picks the control arm by name (`"control"`, `"A"`, `"baseline"`, and similar), falling back to alphabetical order, so row order in the upload never decides the lift direction; the app states which arm it picked. `stats.frequentist.check_srm` runs against the intended split before and after cleaning, and `check_differential_attrition` tests whether the cleaning step itself dropped rows unevenly between arms.
+5. The app routes the cleaned data to frequentist or Bayesian helpers, then applies frequentist guardrails when the user marks multiple primary metrics or early peeking.
 
-The important boundary is that the LLM never computes the statistic. It only proposes a schema.
+The important boundary is that the LLM never computes the statistic. It only proposes a schema, and only as a shortcut.
 
 ### Causal analysis
 
@@ -127,18 +132,19 @@ Covers the planning mathematics that a binary sample-size formula leaves out:
 - continuous-outcome sizing, where the requirement scales with variance rather than a base rate
 - CUPED and regression-adjustment variance reduction, including estimating the pre/post correlation from real data
 - the allocation penalty an uneven split pays, shared with `stats/frequentist.py` so the two cannot diverge
+- the design effect (Kish) that a clustered randomisation costs, threaded through the sample-size, reverse-MDE, and guardrail-sensitivity calculations
 - duration planning that separates newly eligible units from daily actives and adds the maturation window of the last enrolled cohort
 - treatment-intensity costing with the marginal return per extra effect point
 - ITT as the primary estimand plus CACE/LATE via the Wald instrumental-variables ratio
 - skew diagnostics and simulation-based power, which resample real historical outcomes and run the exact planned analysis, including any pre-registered winsorisation
-- the smallest guardrail regression the test could actually have detected
+- the smallest guardrail regression the test could actually have detected, corrected for the same design effect
 - a metric-layer classifier that fails an outcome defined on post-assignment state
 
 The simulation always runs a zero-lift case alongside the powered one. If the false-positive rate under no effect is not close to alpha, the analysis method is miscalibrated on that distribution and any closed-form sample size is unreliable, so the result says so rather than leaving it to the reader.
 
 ### `stats/prereg.py`
 
-Holds the pre-registration contract and the verification that carries it into the readout. `build_preregistration` records the decisions most often revised after data arrives, particularly the outcome transform and the number of primary metrics. `verify_against_plan` returns one row per commitment, ordered so a broken commitment is read before the effect it would otherwise qualify. `summarise_readout` states the result as absolute uplift, relative uplift, interval, and business impact, and separates an inconclusive test from evidence of no effect.
+Holds the pre-registration contract and the verification that carries it into the readout. `build_preregistration` records the decisions most often revised after data arrives, particularly the outcome transform, the number of primary metrics, and the cluster design effect the plan was sized under. `verify_against_plan` returns one row per commitment, ordered so a broken commitment is read before the effect it would otherwise qualify. `read_guardrail` reads what a guardrail actually did, in either direction (a rise or a drop can be the harm, set by `higher_is_worse`), and will not call an underpowered clean reading proof of safety. `summarise_readout` states the result as absolute uplift, relative uplift, interval, and business impact; it separates an inconclusive test from evidence of no effect, and within that, a result that only ruled out a win from one that ruled out a loss too. `serialise_preregistration` and `parse_preregistration` let a locked plan be downloaded and restored, so a page refresh no longer erases it; restoring validates the file rather than trusting it, and a plan saved by an older version of the app loads with documented compatibility defaults.
 
 ### `stats/bayesian.py`
 
@@ -235,5 +241,9 @@ For repo hygiene, `.github/workflows/tests.yml` runs the test suite on GitHub Ac
 - The app exposes Bonferroni-style multiple-comparison guardrails and an early-peeking warning, but not a full sequential-testing framework. Unplanned looks are flagged, not corrected with an alpha-spending schedule.
 - Simulation-based power resamples the uploaded history, so it inherits whatever selection that sample carries. It answers "is the analysis method calibrated on this shape", not "is this sample representative".
 - CACE/LATE assumes the exclusion restriction and no defiers. The app reports it as a labelled secondary to ITT and does not test those assumptions.
-- Cluster randomisation is not sized: the sample formulas assume independent units, so a test randomised by team, market, or account needs a design-effect adjustment the app does not apply.
+- Cluster randomisation is sized with a design effect, but that correction is only as good as the intracluster correlation the user supplies. The app does not estimate it from data.
 - Plan verification depends on analyst attestation for the facts the app cannot observe, such as whether the analysis really covered every randomised unit.
+- Guardrail direction (whether a rise or a drop counts as harm) is declared by the analyst, not inferred from the metric name.
+- The unit-of-analysis check needs the user to name a unit column, and it warns rather than aggregating; it does not fix a clustered file on its own.
+- The sample-ratio-mismatch threshold, 0.001, is a convention, chosen because the check runs on every readout and an ordinary 0.05 threshold would cry wolf on routine sampling noise.
+- A downloaded plan is a file the user has to keep. Nothing is stored server-side, so losing the file loses the plan.

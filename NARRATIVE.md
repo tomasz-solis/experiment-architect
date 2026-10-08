@@ -168,6 +168,15 @@ close.
   failed payments or complaints, need far more sample than the primary metric.
   The app reports the smallest regression the test could have detected, so
   "no guardrail moved" can be read as either reassurance or as silence.
+- **A guardrail's direction has to be stated by a human.** The app asks
+  whether a rise or a drop counts as harm for that specific guardrail. Get
+  that backwards and a guardrail that just recorded real harm reads as good
+  news instead.
+- **Clustered randomisation is sized only as well as the ICC you feed it.**
+  Randomising by team, market, or account instead of by person costs sample,
+  and the app prices that with a design effect. The correction is only as
+  honest as the intracluster correlation typed into it; the app does not
+  estimate that number from data.
 - **A locked plan is checked, not enforced.** The readout compares delivered
   sample, split, estimand, outcome transform, and alpha spend against what was
   pre-registered, and says which commitments broke. It cannot know whether the

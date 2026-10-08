@@ -1,6 +1,6 @@
 ---
 name: Experiment Architect
-description: Know whether an experiment can answer your question before you spend the traffic on it — one of three Product Decision Lab surfaces sharing a single design system.
+description: Know whether an experiment can answer your question before you spend the traffic on it. One of three Product Decision Lab apps sharing one design system.
 colors:
   periwinkle: "#4f6dff"
   periwinkle-strong: "#3a56e0"
@@ -102,251 +102,167 @@ components:
     padding: "0.5rem 0.75rem"
 ---
 
-# Design System: Experiment Architect
+# Design system: Experiment Architect
 
-> **Shared system.** Sections 1–5 of this file are the Product Decision Lab design system and are
-> **identical in all three repos**: `product-decision-under-uncertainty`, `experiment-architect`,
-> `measurement-maturity-framework`. The token file behind them (`--ds-*`) is byte-identical in all
-> three, stored at `static/theme-tokens.css` here, `ui/theme-tokens.css` in experiment-architect, and
-> `mmf/theme-tokens.css` in measurement-maturity-framework. Change a token here, copy it there. A
-> visual idea that cannot travel to the other two does not ship.
+> Shared system. Sections 1 to 5 are the Product Decision Lab design system and are identical in `product-decision-under-uncertainty`, `experiment-architect` and `measurement-maturity-framework`. The token file behind them (`--ds-*`) is byte-identical in all three: `static/theme-tokens.css` in product-decision-under-uncertainty, `ui/theme-tokens.css` in experiment-architect, `mmf/theme-tokens.css` in measurement-maturity-framework. Change a token in one, copy it to the other two. A visual idea that can't work in all three doesn't ship.
 
 ## 1. Overview
 
-**Creative North Star: "The Briefing Room"**
+North star: "The Briefing Room".
 
-A dark banner frames the question; light panels lay the evidence on the table. That is the whole
-system in one sentence. The user arrives with a decision they have to defend to someone else, so the
-interface is staged like a briefing: the hero states what is being decided, and everything below it
-is material you could put in front of a room without apologising for it. The dark console — hero and
-sidebar — is where the app speaks. The light field below is where the evidence lives. Nothing else
-in the system is allowed to compete with that division.
+A dark banner states the question and light panels lay out the evidence. The user has a decision to defend to someone else, so the page works like a briefing: the hero says what is being decided, and everything below it could go in front of a room. The dark console (hero and sidebar) is where the app speaks. The light field below is where the evidence lives. Nothing competes with that split.
 
-The register is a tool, not a brochure. Density is welcome; decoration is not. The interface should
-feel like an instrument that happens to be well made, not a product that is selling you something.
-Type is one family across every surface, colour is used as signal, and depth is spent only where it
-carries meaning. When in doubt, the honest, plainer option wins — this system's credibility is the
-product's credibility, and a chart that flatters is worse than no chart.
+This is a tool, not a brochure. Density is fine, decoration isn't. Use one type family everywhere, use colour as a signal, and add depth only where it means something. When unsure, the plainer option wins. A chart that flatters is worse than no chart.
 
-This system explicitly rejects **the raw Streamlit default**: stock widgets, the stock red primary,
-the untended look of a prototype nobody cared about. It equally rejects the opposite failure — the
-SaaS dashboard that hides thin reasoning behind gradients and vanity metrics. Neither reads as
-serious to someone with a real decision on the table.
+The system rejects two failures. One is the raw Streamlit default: stock widgets, the stock red primary, a prototype nobody looked after. The other is the SaaS dashboard that hides thin reasoning behind gradients and vanity metrics.
 
-**Key Characteristics:**
-- Dark console (hero + sidebar), light evidence field. One division, held everywhere.
-- One type family (Avenir Next), one fixed rem scale. No display face, no pairing.
-- Periwinkle is the Lab's signature; mint is reserved and means *passed*.
-- Flat at rest. Depth is a response to state, not a default texture.
-- Never encode meaning in hue alone.
+In short:
 
-## 2. Colors: The Instrument Palette
+- Dark console (hero and sidebar), light evidence field, everywhere.
+- One type family (Avenir Next) on one fixed rem scale. No display face.
+- Periwinkle is the Lab's signature. Mint is reserved and means passed.
+- Flat at rest. Depth responds to state.
+- Never carry meaning in hue alone.
 
-Periwinkle and mint on a cool grey field: the palette of a lit instrument, not a brand deck. Cool
-neutrals carry the surface; the two brand hues carry identity and state.
+## 2. Colours: the instrument palette
 
-### Primary
-- **Instrument Periwinkle** (`#4f6dff`): the Lab's signature. Primary actions, current selection,
-  focus, the first chart series, and the wash inside the hero. As the family identity marker it is
-  permitted more surface than a typical product accent — it may carry heroes, headers, and a chart
-  series — but it never becomes a decorative texture applied to things that are not interactive or
-  not the subject.
-- **Deep Periwinkle** (`#3a56e0`): the AA-safe text form. Any periwinkle *text* on a light surface
-  uses this, never `#4f6dff`, which fails 4.5:1 as body copy.
+Periwinkle and mint on a cool grey field. Cool neutrals carry the surface; the two brand hues carry identity and state.
 
-### Secondary
-- **Clearance Mint** (`#1ecf9b`): reserved. Mint means a threshold was cleared, a check passed, a
-  state is healthy. It is never a second decorative accent, never a gradient partner, never "the
-  other brand colour". Its meaning is the point.
-- **Deep Mint** (`#0a7d5c`): the AA-safe text and stroke form of mint on light surfaces.
+| Role | Name | Value | Use |
+|---|---|---|---|
+| Primary | Instrument Periwinkle | `#4f6dff` | The Lab's signature: primary actions, current selection, focus, the first chart series, the hero wash. It may cover more surface than a normal accent (heroes, headers, a chart series), but never as decoration on things that aren't interactive or the subject. |
+| Primary text | Deep Periwinkle | `#3a56e0` | Any periwinkle text on a light surface. `#4f6dff` fails 4.5:1 as body copy. |
+| Secondary | Clearance Mint | `#1ecf9b` | Reserved: a threshold cleared, a check passed, a healthy state. Never decoration, never a gradient partner. |
+| Secondary text | Deep Mint | `#0a7d5c` | Mint text and strokes on light surfaces. |
+| Warning | Caution Amber / Deep Amber | `#d18a1f` / `#9a6a12` | Warnings, caveats, a stale fingerprint, a governance banner. Never a highlight. |
+| Risk | Risk Red / Deep Red | `#dd5b52` / `#c43d33` | A breach, a failure, a guardrail not met. Never for emphasis. |
+| Text | Ink | `#10131a` | Primary text on light surfaces, and the fill of a selected tab. |
+| Secondary text | Muted Slate | `#646c79` | Captions, secondary text, the baseline chart series. Never go lighter for body text; lighter greys fail contrast. |
+| Background | Field / Deep Field | `#eff2f7` / `#e7ebf3` | The app background, a cool grey gradient. |
+| Surface | Panel | `#ffffffcc` | The evidence surface: white at 80% over the field. |
+| Border | Hairline | `#10131a14` | Every panel border. Always 1px. |
+| Console | Console | `#0d1320` to `#101925` | The dark gradient of the sidebar and hero. |
+| Console text | Console Ink | `#f8fbff` | Text on the console. |
 
-### Tertiary
-- **Caution Amber** (`#d18a1f`) / **Deep Amber** (`#9a6a12`): a warning, a caveat, a stale
-  fingerprint, a governance banner. Never a highlight.
-- **Risk Red** (`#dd5b52`) / **Deep Red** (`#c43d33`): a breach, a failure, a guardrail not met.
-  Never used for emphasis or for "important".
+Chart series, shared by all three apps, in this order (adjacent series differ in lightness as well as hue): Instrument Periwinkle `#4f6dff`, Deep Mint `#0a7d5c`, Deep Amber `#b5741a`, Deep Red `#c43d33`, then Muted Slate `#646c79` for the baseline or do-nothing series. Gridlines `#dde3ec`, axis and tick text in Ink, white hover surface.
 
-### Neutral
-- **Ink** (`#10131a`): all primary text on light surfaces; also the fill of a selected tab.
-- **Muted Slate** (`#646c79`): secondary text, captions, baseline chart series. This is the floor —
-  do not go lighter for body text. Lighter greys fail contrast and read as carelessness.
-- **Field** (`#eff2f7`) and **Deep Field** (`#e7ebf3`): the app background, a cool grey gradient.
-- **Panel** (`#ffffffcc`): the evidence surface — white at 80%, over the field.
-- **Hairline** (`#10131a14`): every panel border. 1px. Always.
-- **Console** (`#0d1320` → `#101925`): the dark gradient of the sidebar and hero.
-- **Console Ink** (`#f8fbff`): text on the console.
+Rules:
 
-### Chart series (shared, all three apps)
-One categorical ramp, in this order, chosen so adjacent series differ in lightness as well as hue:
-**Instrument Periwinkle** (`#4f6dff`) → **Deep Mint** (`#0a7d5c`) → **Deep Amber** (`#b5741a`) →
-**Deep Red** (`#c43d33`) → **Muted Slate** (`#646c79`, reserved for the baseline / do-nothing
-series). Gridlines `#dde3ec`, axis and tick text Ink, hover surface white.
-
-### Named Rules
-**The Signature Rule.** Periwinkle is identity and may carry surface. Mint is meaning and may not.
-The moment mint appears on something that did not pass a check, the system has started lying.
-
-**The Redundant Encoding Rule.** No meaning may be carried by hue alone — not in a chart, not in a
-status pill, not in a guardrail verdict. Colour always rides alongside a label, a shape, a dash
-pattern, or an icon. This is a WCAG AA requirement and a decision-integrity requirement at once: a
-reader who cannot see the green must still be able to see that it passed.
-
-**The Deep-Form Rule.** Every brand hue has a light form (fills, marks, backgrounds) and a deep form
-(text, strokes). Text on a light surface always takes the deep form. `#4f6dff` as body copy is a bug.
+- Signature rule: periwinkle is identity and may cover surface. Mint is meaning and may not. Mint on something that didn't pass a check is a lie.
+- Redundant encoding rule: no meaning rides on hue alone, in a chart, a status pill or a guardrail verdict. Colour always comes with a label, shape, dash pattern or icon. This is a WCAG AA requirement and keeps decisions honest: a reader who can't see the green must still see that it passed.
+- Deep-form rule: every brand hue has a light form (fills, marks, backgrounds) and a deep form (text, strokes). Text on a light surface always uses the deep form. `#4f6dff` as body copy is a bug.
 
 ## 3. Typography
 
-**Display Font:** none. This system has no display face.
-**Body Font:** Avenir Next (falling back to Segoe UI, Helvetica Neue, system-ui, -apple-system, sans-serif)
-**Label/Mono Font:** none distinct; code and figures inherit the same stack, with the browser mono
-default reserved for literal code strings.
+- Display font: none.
+- Body font: Avenir Next, falling back to Segoe UI, Helvetica Neue, system-ui, -apple-system, sans-serif.
+- Label and mono font: none separate. Code and figures use the same stack; the browser mono default is only for literal code strings.
 
-**Character:** One humanist sans doing every job, from the hero headline down to the axis tick. The
-personality comes from weight and negative tracking on the large sizes, not from a second face. A
-serif or display pairing here would read as a brochure; the tool would lose the room.
+One humanist sans does every job, from the hero title to the axis ticks. Personality comes from weight and tighter tracking at large sizes. A serif or display pairing would look like a brochure.
 
-### Hierarchy
-- **Display** (800, `clamp(2.1rem, 3.6vw, 3.1rem)`, 1.0, `-0.04em`): the hero title only. The single
-  place fluid type is permitted, because the hero is a banner, not UI.
-- **Headline** (700, 1.75rem, 1.2, `-0.03em`): a page-level heading below the hero.
-- **Title** (700, 1.45rem, 1.3, `-0.02em`): section headings — "Guardrail eligibility", "Policy frontier".
-- **Body** (400, 1rem, 1.6): explanatory prose. Capped at 62rem (~70ch); prose never runs the full
-  1440px container.
-- **Label** (600, 0.82rem, 1.4): control labels, table headers, chart legends. Sentence case.
+| Level | Weight | Size | Line height | Tracking | Use |
+|---|---|---|---|---|---|
+| Display | 800 | `clamp(2.1rem, 3.6vw, 3.1rem)` | 1.0 | `-0.04em` | Hero title only. The one place fluid type is allowed. |
+| Headline | 700 | 1.75rem | 1.2 | `-0.03em` | Page heading below the hero |
+| Title | 700 | 1.45rem | 1.3 | `-0.02em` | Section headings ("Guardrail eligibility", "Policy frontier") |
+| Body | 400 | 1rem | 1.6 | | Prose, capped at 62rem (about 70 characters), never the full 1440px container |
+| Label | 600 | 0.82rem | 1.4 | | Control labels, table headers, chart legends, sentence case |
 
-### Named Rules
-**The One Family Rule.** Avenir Next carries headings, buttons, labels, body, and data. Adding a
-second family is prohibited. Contrast comes from weight (400 / 600 / 700 / 800) and size.
+Rules:
 
-**The Fixed-Scale Rule.** Every size in the UI is a fixed rem step. `clamp()` is permitted in exactly
-one place — the hero title. A section heading that resizes with the viewport is a brand-page habit
-and does not belong in a tool.
-
-**The Eyebrow Rule.** Tiny uppercase letter-spaced labels (`0.74rem`, `0.12em`+, uppercase) are a
-scaffold, not a voice. At most **one** per screen, in the hero, and only when it names something real.
-Stacking an uppercase eyebrow above every card, note, and metric is the tell of a generated layout;
-sentence-case labels at 0.82rem do the same job without the costume.
+- One family rule: Avenir Next carries headings, buttons, labels, body and data. No second family. Contrast comes from weight (400, 600, 700, 800) and size.
+- Fixed scale rule: every UI size is a fixed rem step. `clamp()` is allowed only on the hero title.
+- Eyebrow rule: tiny uppercase letter-spaced labels (`0.74rem`, `0.12em` or more) are allowed at most once per screen, in the hero, and only when they name something real. An uppercase eyebrow over every card and metric is the mark of a generated layout. Sentence-case labels at 0.82rem do the same job.
 
 ## 4. Elevation
 
-Flat at rest. The evidence field is a plane of hairline-bordered panels sitting directly on the
-background — no shadow, no float, no glass. Depth in this system is **a response to state**, never a
-default texture: it appears when an element is hovered, when it overlays other content, or when it is
-the console speaking. Everything else earns its separation from the background with a 1px hairline
-(`#10131a14`) and the tonal step between panel white and the cool grey field.
+Flat at rest. The evidence field is a plane of hairline-bordered panels on the background, with no shadow, float or glass. Depth appears only when an element is hovered, overlays other content, or is the console. Everything else is separated by a 1px hairline (`#10131a14`) and the tonal step between panel white and the grey field.
 
-The failure mode this replaces is "everything is a floating card": when every panel carries a
-48–72px shadow, nothing reads as raised, the page acquires a soft blur of drop shadows, and depth
-stops carrying information.
+This replaces the "everything is a floating card" look. When every panel has a 48 to 72px shadow, nothing reads as raised and depth stops carrying information.
 
-### Shadow Vocabulary
-- **Console** (`box-shadow: 0 30px 72px rgba(12, 16, 24, 0.22)`): the hero banner only. It is the one
-  element allowed to sit visibly above the page.
-- **Overlay** (`box-shadow: 0 16px 36px rgba(15, 23, 42, 0.14)`): things that genuinely float over
-  content — dropdowns, popovers, modals, the file-uploader menu.
-- **Hover lift** (`box-shadow: 0 12px 24px rgba(79, 109, 255, 0.12)`, with `translateY(-1px)`):
-  interactive elements, on hover only. Removed under `prefers-reduced-motion`.
-- **Rest**: none. A `border: 1px solid` hairline instead.
+| Shadow | Value | Use |
+|---|---|---|
+| Console | `0 30px 72px rgba(12, 16, 24, 0.22)` | The hero banner only |
+| Overlay | `0 16px 36px rgba(15, 23, 42, 0.14)` | Things that float over content: dropdowns, popovers, modals, the file uploader menu |
+| Hover lift | `0 12px 24px rgba(79, 109, 255, 0.12)` with `translateY(-1px)` | Interactive elements on hover only. Removed under `prefers-reduced-motion`. |
+| Rest | none | A 1px solid hairline border instead |
 
-### Named Rules
-**The Flat-At-Rest Rule.** A panel, a chart, a table, a metric card, and an expander all sit flat.
-If a surface has a shadow at rest, delete the shadow.
+Rules:
 
-**The No-Glass Rule.** `backdrop-filter: blur()` is prohibited as decoration. Translucency is a
-material for overlays only, and even there it must be justified by something real sitting behind it.
-
-**The Audit Test.** Squint at the page. If you see a field of soft grey halos rather than a flat
-sheet of evidence, the shadows are back and they are wrong.
+- Flat at rest rule: panels, charts, tables, metric cards and expanders sit flat. A shadow at rest gets deleted.
+- No glass rule: no decorative `backdrop-filter: blur()`. Translucency is only for overlays, and only when something real sits behind them.
+- Squint test: if the page looks like a field of soft grey halos and not a flat sheet of evidence, the shadows are back.
 
 ## 5. Components
 
-Familiar affordances, immaculately kept. Nothing in this system reinvents a control; the tool should
-disappear into the task. Every interactive component ships all of: default, hover, focus-visible,
-active, disabled.
+Familiar controls, well kept. Nothing reinvents a control. Every interactive component has default, hover, focus-visible, active and disabled states.
 
 ### Buttons
-- **Shape:** fully rounded pill (`999px`).
-- **Primary:** solid Instrument Periwinkle (`#4f6dff`) with white label, `0.7rem 1.15rem` padding,
-  weight 600. Used for the one action that moves the decision forward on a given screen.
-- **Secondary:** panel white with an ink label and a hairline border. Everything else — downloads,
-  resets, template fetches.
-- **Hover / Focus:** hover lifts 1px and takes the hover-lift shadow; `:focus-visible` shows a 2px
-  Instrument Periwinkle ring at 2px offset. The focus ring is never removed, on any surface.
-- **On the console:** a button sitting on the dark sidebar inverts to a solid white chip with ink
-  text. Translucent buttons on the dark gradient are prohibited — they were the source of the
-  invisible-label bug this system already fixed once.
 
-### Cards / Containers
-- **Corner Style:** 24px (`{rounded.card}`).
-- **Background:** Panel white (`#ffffffcc`) over the field.
-- **Border:** 1px Hairline. Always present — it is what does the work now that shadows are gone.
-- **Shadow Strategy:** none at rest. See Elevation.
-- **Internal Padding:** `1rem 1.05rem`.
-- **Prohibited:** nested cards; a coloured accent stripe on any edge; a gradient bar across the top.
+- Shape: full pill (`999px`).
+- Primary: solid Instrument Periwinkle (`#4f6dff`), white label, `0.7rem 1.15rem` padding, weight 600. For the one action that moves the decision forward on a screen.
+- Secondary: panel white, ink label, hairline border. For everything else: downloads, resets, templates.
+- Hover and focus: hover lifts 1px with the hover-lift shadow. `:focus-visible` shows a 2px Instrument Periwinkle ring at 2px offset. The focus ring is never removed.
+- On the console: a button on the dark sidebar becomes a solid white chip with ink text. Translucent buttons on the dark gradient caused an invisible-label bug once, so they are banned.
 
-### Inputs / Fields
-- **Style:** 18px radius, 1px border. On the light field: white fill, hairline border. On the console:
-  white at 12% fill, white at 26% border, Console Ink text — and a real caret and placeholder colour,
-  never the inherited dark default.
-- **Focus:** border shifts to Instrument Periwinkle and the focus ring appears. No glow.
-- **Error:** border and helper text take Deep Red; the helper text says what to do, not just what broke.
-- **Disabled:** 55% opacity, no hover response.
+### Cards and containers
+
+- Corners: 24px (`{rounded.card}`).
+- Background: Panel white (`#ffffffcc`) over the field.
+- Border: 1px Hairline, always. It does the separating now that shadows are gone.
+- Shadow: none at rest (see Elevation).
+- Padding: `1rem 1.05rem`.
+- Banned: nested cards, a coloured stripe on any edge, a gradient bar across the top.
+
+### Inputs
+
+- Style: 18px radius, 1px border. On the light field: white fill, hairline border. On the console: white at 12% fill, white at 26% border, Console Ink text, and a visible caret and placeholder colour (never the inherited dark default).
+- Focus: border turns Instrument Periwinkle and the focus ring appears. No glow.
+- Error: border and helper text in Deep Red. The helper text says what to do, not only what broke.
+- Disabled: 55% opacity, no hover response.
 
 ### Navigation
-- **Tabs:** pill-shaped (`999px`), sentence case, weight 600. Idle: panel white with a hairline border
-  and ink label. Selected: solid **Ink** fill with a white label — the selection is a hard, unambiguous
-  switch, not a tint. Hover on an idle tab: hairline darkens, no fill change. No blur, no glass.
-- **Sidebar:** the console. Dark gradient (`#0d1320` → `#101925`), Console Ink labels, a hairline
-  right border. It holds run settings and data source: the levers, never the evidence.
 
-### The Console Hero (signature component)
-The dark banner at the top of every Lab app — `.editorial-hero` here, `.app-hero` in
-product-decision-under-uncertainty, `.mmf-hero` in measurement-maturity-framework. It is the one
-place the system raises its voice.
-- 28px radius, `1.9rem 2.1rem` padding, console gradient with a periwinkle radial wash top-left and a
-  restrained mint wash top-right, Console shadow, 1px white-at-8% border.
-- Contents, in order: at most one kicker (sentence case or small caps, never both uppercase *and*
-  wide-tracked on every screen), the Display title, and one subtitle line capped at 48rem.
-- The three apps' heroes differ only in copy and in the exact radial placement. Their structure,
-  radius, padding scale, and shadow are the same. This is what makes the family legible as a family.
+- Tabs: pill shaped (`999px`), sentence case, weight 600. Idle: panel white, hairline border, ink label. Selected: solid Ink fill, white label, a hard switch and not a tint. Hovering an idle tab darkens the hairline only. No blur, no glass.
+- Sidebar: the console. Dark gradient (`#0d1320` to `#101925`), Console Ink labels, a hairline right border. It holds run settings and the data source: the levers, never the evidence.
+
+### Console hero (signature component)
+
+The dark banner at the top of every Lab app (`.editorial-hero` here, `.app-hero` in product-decision-under-uncertainty, `.mmf-hero` in measurement-maturity-framework). It is the one place the system raises its voice.
+
+- 28px radius, `1.9rem 2.1rem` padding, console gradient with a periwinkle radial wash top left and a softer mint wash top right, Console shadow, 1px white-at-8% border.
+- Contents, in order: at most one kicker (sentence case or small caps, never both uppercase and wide tracking on every screen), the Display title, and one subtitle line capped at 48rem.
+- The three heroes differ only in copy and exact radial placement. Structure, radius, padding and shadow are the same, which is what makes them read as one family.
 
 ### Charts
-- Series colours come from the shared categorical ramp (Section 2), in order, and are **paired with a
-  non-colour channel**: distinct markers, dash patterns, or direct labels.
-- Gridlines `#dde3ec`, hairline weight. Axis titles and ticks in Ink, no chart title where a section
-  heading already says it.
-- Chart surfaces obey Flat-At-Rest: the plot sits in a hairline panel, not a floating card.
-- A chart never uses mint for a series that is not "passed"; see The Signature Rule.
 
-## 6. Do's and Don'ts
+- Series colours come from the shared ramp (section 2), in order, and always pair with a non-colour channel: markers, dash patterns or direct labels.
+- Gridlines `#dde3ec` at hairline weight. Axis titles and ticks in Ink. No chart title when a section heading already says it.
+- Charts sit flat in a hairline panel, not a floating card.
+- Never use mint for a series that doesn't mean "passed".
 
-### Do:
-- **Do** keep `theme-tokens.css` byte-identical across the three repos. Edit it here, copy it verbatim
-  into `experiment-architect/ui/` and `measurement-maturity-framework/mmf/`. A token is a three-repo change.
-- **Do** alias the shared tokens locally (`--app-*`, `--mmf-*`, `--blue`) and never redefine their values.
-- **Do** use Deep Periwinkle (`#3a56e0`), Deep Mint (`#0a7d5c`), Deep Amber (`#9a6a12`), Deep Red
-  (`#c43d33`) for any coloured *text* on a light surface. The light forms are for fills and marks.
-- **Do** pair every colour-coded meaning with a label, shape, or dash — guardrail pass/fail especially.
-- **Do** give every panel a 1px hairline (`#10131a14`) and no shadow at rest.
-- **Do** honour `prefers-reduced-motion`: the panel entrance animation and the hover lift both collapse
-  to an instant state change. Transitions stay at 140–250ms; users are in a task, not watching a show.
-- **Do** keep prose to ~70ch (62rem) even though the container runs to 1440px.
-- **Do** invert controls to solid white chips when they sit on the dark console.
+## 6. Do's and don'ts
 
-### Don't:
-- **Don't** ship anything that reads as **a raw Streamlit default** — the stock red primary, unstyled
-  widgets, an untended prototype. That is this product's stated anti-reference, and it takes the
-  method's credibility down with it.
-- **Don't** put a shadow on a resting surface. `0 18px 48px` under every chart, table, metric, and
-  expander is the "everything floats" failure this system exists to correct.
-- **Don't** use `backdrop-filter: blur()` decoratively — not on tabs, not on cards. Glass is not a texture.
-- **Don't** put a gradient accent bar across the top of a metric card, or a coloured stripe down any
-  edge of any surface. Both are decoration pretending to be information.
-- **Don't** stack a tiny uppercase letter-spaced eyebrow above every section, note, and metric. One
-  per screen, in the hero, or none.
-- **Don't** use gradient text (`background-clip: text`) anywhere, ever.
-- **Don't** use mint for anything that has not passed a check.
-- **Don't** introduce a second font family, or a `clamp()` heading anywhere but the hero title.
-- **Don't** let chart series drift off the shared ramp. Green/orange/slate palettes invented per-app
-  are how three apps stop looking like one product.
-- **Don't** encode a guardrail verdict, a scenario, or a series in colour alone.
+Do:
+
+- Keep `theme-tokens.css` byte-identical across the three repos. Edit it in one, copy it verbatim to the other two (`product-decision-under-uncertainty/static/` and `measurement-maturity-framework/mmf/`). A token change is a three-repo change.
+- Alias the shared tokens locally (`--app-*`, `--mmf-*`, `--blue`). Never redefine their values.
+- Use Deep Periwinkle (`#3a56e0`), Deep Mint (`#0a7d5c`), Deep Amber (`#9a6a12`) and Deep Red (`#c43d33`) for coloured text on a light surface. The light forms are for fills and marks.
+- Pair every colour-coded meaning with a label, shape or dash, especially guardrail pass/fail.
+- Give every panel a 1px hairline (`#10131a14`) and no shadow at rest.
+- Honour `prefers-reduced-motion`: the panel entrance and hover lift become instant. Keep transitions at 140 to 250ms.
+- Keep prose to about 70 characters (62rem) even though the container is 1440px.
+- Turn controls into solid white chips when they sit on the dark console.
+
+Don't:
+
+- Ship anything that looks like a raw Streamlit default: the stock red primary, unstyled widgets, an untended prototype.
+- Put a shadow on a resting surface. `0 18px 48px` under every chart, table and metric is the failure this system fixes.
+- Use `backdrop-filter: blur()` as decoration, on tabs or cards.
+- Put a gradient bar across a metric card or a coloured stripe down any edge.
+- Stack a tiny uppercase eyebrow above every section and metric. One per screen, in the hero, or none.
+- Use gradient text (`background-clip: text`) anywhere.
+- Use mint for anything that hasn't passed a check.
+- Add a second font family, or a `clamp()` heading anywhere but the hero title.
+- Let chart series drift off the shared ramp. Per-app palettes are how three apps stop looking like one product.
+- Show a guardrail verdict, scenario or series in colour alone.
